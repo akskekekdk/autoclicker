@@ -3,6 +3,7 @@ package com.uvm.autoclicker
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Path
@@ -10,14 +11,18 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.text.SpannableString
 import android.text.style.RelativeSizeSpan
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -242,10 +247,16 @@ class ClickService : AccessibilityService() {
         setStroke(dp(2), Color.WHITE)
     }
 
+    /** 마커 글자: 큰 번호 + 작은 대기시간(ms). */
+    private fun markerText(number: Int, delayMs: Long) = SpannableString("$number\n${delayMs}").apply {
+        setSpan(RelativeSizeSpan(0.6f), number.toString().length + 1, length, 0)
+    }
+
     private fun createMarker(number: Int, point: ClickPoint): Marker {
         val view = TextView(this).apply {
-            text = number.toString()
-            textSize = 16f
+            text = markerText(number, point.delayMs)
+            textSize = 15f
+            setLineSpacing(0f, 0.85f)
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             background = markerBackground(false)
@@ -256,9 +267,51 @@ class ClickService : AccessibilityService() {
             height = markerPx
         }
         val marker = Marker(view, params)
-        makeDraggable(view, view, params, onDragEnd = { savePositions() })
+        makeDraggable(
+            view, view, params,
+            onTap = { editDelay(number - 1) },
+            onDragEnd = { savePositions() },
+        )
         wm.addView(view, params)
         return marker
+    }
+
+    /** 마커를 탭하면 그 포인트의 '터치 후 대기 시간'을 바로 입력하는 창을 띄운다. */
+    private fun editDelay(index: Int) {
+        if (running || index !in config.points.indices) return
+        val point = config.points[index]
+        val input = EditText(ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(point.delayMs.toString())
+            setSelectAllOnFocus(true)
+        }
+        val box = FrameLayout(this).apply {
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(input)
+        }
+        val apply = { value: Long ->
+            point.delayMs = value
+            Store.save(this, config)
+            markers.getOrNull(index)?.view?.text = markerText(index + 1, value)
+        }
+        val dialog = AlertDialog.Builder(ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert))
+            .setTitle("${index + 1}번 터치 후 대기 시간 (ms)")
+            .setView(box)
+            .setPositiveButton("저장") { _, _ ->
+                val v = input.text.toString().toLongOrNull()
+                if (v == null || v < 0) {
+                    Toast.makeText(this, "0 이상의 숫자를 입력하세요", Toast.LENGTH_SHORT).show()
+                } else {
+                    apply(v)
+                }
+            }
+            .setNeutralButton("기본값 ${DEFAULT_DELAY_MS}") { _, _ -> apply(DEFAULT_DELAY_MS) }
+            .setNegativeButton("취소", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dialog.show()
+        input.requestFocus()
     }
 
     private fun removeMarkers() {
