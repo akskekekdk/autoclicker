@@ -308,8 +308,7 @@ class ClickService : AccessibilityService() {
         if (running) return
         val dm = resources.displayMetrics
         val offset = dp(24) * (config.points.size % 6)
-        val delay = config.points.lastOrNull()?.delayMs ?: 1000
-        config.points.add(ClickPoint(dm.widthPixels / 2 + offset, dm.heightPixels / 2 + offset, delay))
+        config.points.add(ClickPoint(dm.widthPixels / 2 + offset, dm.heightPixels / 2 + offset, DEFAULT_DELAY_MS))
         Store.save(this, config)
         rebuildMarkers()
     }

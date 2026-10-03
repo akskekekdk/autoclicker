@@ -4,8 +4,11 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** 새 포인트의 기본 "터치 후 대기 시간" */
+const val DEFAULT_DELAY_MS = 150L
+
 /** 터치할 위치(화면 좌표, 마커 중심)와 터치 후 다음 포인트까지 대기 시간. */
-data class ClickPoint(var x: Int, var y: Int, var delayMs: Long = 1000)
+data class ClickPoint(var x: Int, var y: Int, var delayMs: Long = DEFAULT_DELAY_MS)
 
 data class Config(
     val points: MutableList<ClickPoint> = mutableListOf(),
@@ -27,7 +30,7 @@ object Store {
             val arr = o.optJSONArray("points") ?: JSONArray()
             val points = MutableList(arr.length()) { i ->
                 val p = arr.getJSONObject(i)
-                ClickPoint(p.getInt("x"), p.getInt("y"), p.optLong("delayMs", 1000))
+                ClickPoint(p.getInt("x"), p.getInt("y"), p.optLong("delayMs", DEFAULT_DELAY_MS))
             }
             Config(points, o.optInt("repeat", 0), o.optLong("loopDelayMs", 0))
         } catch (e: Exception) {

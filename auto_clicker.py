@@ -158,7 +158,7 @@ class AutoClickerApp:
         self.x_var = tk.StringVar(value="0")
         self.y_var = tk.StringVar(value="0")
         self.click_var = tk.StringVar(value="왼쪽")
-        self.delay_var = tk.StringVar(value="1000")
+        self.delay_var = tk.StringVar(value="150")
 
         ttk.Label(edit, text="X").grid(row=0, column=0, **pad)
         ttk.Entry(edit, textvariable=self.x_var, width=8).grid(row=0, column=1, **pad)
@@ -310,7 +310,7 @@ class AutoClickerApp:
         try:
             delay = self._parse_int(self.delay_var, "클릭 후 대기")
         except ValueError:
-            delay = 1000
+            delay = 150
         self.add_point({"x": x, "y": y, "click": self.click_var.get(), "delay": delay})
         self.status_var.set(f"포인트 추가: ({x}, {y})")
 
@@ -423,7 +423,7 @@ class AutoClickerApp:
                 if click not in CLICK_TYPES:
                     click = "왼쪽"
                 points.append(
-                    {"x": int(p["x"]), "y": int(p["y"]), "click": click, "delay": max(0, int(p.get("delay", 1000)))}
+                    {"x": int(p["x"]), "y": int(p["y"]), "click": click, "delay": max(0, int(p.get("delay", 150)))}
                 )
         except Exception as e:
             messagebox.showerror("불러오기 실패", f"파일을 읽을 수 없습니다.\n{e}")
