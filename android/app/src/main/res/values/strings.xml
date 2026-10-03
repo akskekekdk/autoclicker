@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">오토 클리커</string>
+    <string name="service_label">오토 클리커</string>
+    <string name="service_description">화면에 지정한 여러 위치를 설정한 간격으로 자동 터치합니다. 화면 내용은 읽지 않습니다.</string>
+</resources>

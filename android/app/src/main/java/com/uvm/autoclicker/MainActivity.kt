@@ -1,0 +1,213 @@
+package com.uvm.autoclicker
+
+import android.app.Activity
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
+import android.os.Bundle
+import android.provider.Settings
+import android.text.InputType
+import android.view.Gravity
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+
+/** 설정 화면: 권한 안내, 반복 설정, 포인트별 대기 시간 편집. UI는 코드로 구성. */
+class MainActivity : Activity() {
+
+    private lateinit var root: LinearLayout
+    private lateinit var statusText: TextView
+    private lateinit var panelBtn: Button
+    private lateinit var repeatEdit: EditText
+    private lateinit var loopDelayEdit: EditText
+    private lateinit var pointsBox: LinearLayout
+
+    private var config = Config()
+    private val delayEdits = mutableListOf<EditText>()
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(24))
+        }
+        setContentView(ScrollView(this).apply { addView(root) })
+
+        root.addView(title("1. 접근성 권한"))
+        root.addView(text(
+            "화면을 대신 터치하려면 접근성 서비스를 켜야 합니다.\n" +
+                "설정 → 접근성 → 설치된 앱 → '오토 클리커' → 사용.\n" +
+                "※ 회색으로 막혀 있으면: 설정 → 앱 → 오토 클리커 → 우측 상단 ⋮ → '제한된 설정 허용' 후 다시 시도하세요."
+        ))
+        statusText = text("").apply { setTypeface(typeface, Typeface.BOLD) }
+        root.addView(statusText)
+        root.addView(button("접근성 설정 열기") {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        })
+        panelBtn = button("플로팅 패널 열기") { togglePanel() }
+        root.addView(panelBtn)
+
+        root.addView(title("2. 사용 방법"))
+        root.addView(text(
+            "플로팅 패널\n" +
+                "  ⠿ 끌어서 패널 이동\n" +
+                "  ▶ / ■ 시작 / 정지\n" +
+                "  ＋ 터치 위치 추가 (빨간 원을 원하는 곳으로 끌어다 놓기)\n" +
+                "  － 마지막 위치 삭제\n" +
+                "  ⚙ 이 설정 화면 열기\n" +
+                "  ✕ 패널 닫기\n" +
+                "번호 순서대로 터치하며, 각 포인트의 '대기'만큼 기다린 뒤 다음 포인트를 터치합니다."
+        ))
+
+        root.addView(title("3. 반복 설정"))
+        repeatEdit = numberEdit()
+        loopDelayEdit = numberEdit()
+        root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
+        root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
+
+        root.addView(title("4. 포인트별 대기 시간"))
+        pointsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(pointsBox)
+
+        root.addView(button("저장") {
+            if (save()) Toast.makeText(this, "저장했습니다", Toast.LENGTH_SHORT).show()
+        })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        config = Store.load(this)
+        repeatEdit.setText(config.repeat.toString())
+        loopDelayEdit.setText(config.loopDelayMs.toString())
+        renderPoints()
+        renderStatus()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        save()
+    }
+
+    private fun renderStatus() {
+        val service = ClickService.instance
+        if (service == null) {
+            statusText.text = "상태: 접근성 서비스 꺼짐"
+            statusText.setTextColor(Color.parseColor("#C62828"))
+            panelBtn.isEnabled = false
+        } else {
+            statusText.text = "상태: 접근성 서비스 켜짐"
+            statusText.setTextColor(Color.parseColor("#2E7D32"))
+            panelBtn.isEnabled = true
+            panelBtn.text = if (service.isPanelShown) "플로팅 패널 닫기" else "플로팅 패널 열기"
+        }
+    }
+
+    private fun togglePanel() {
+        val service = ClickService.instance ?: return
+        save()
+        if (service.isPanelShown) {
+            service.hidePanel()
+        } else {
+            service.showPanel()
+            moveTaskToBack(true) // 패널을 바로 쓸 수 있도록 앱을 뒤로 보낸다
+        }
+        renderStatus()
+    }
+
+    private fun renderPoints() {
+        pointsBox.removeAllViews()
+        delayEdits.clear()
+        if (config.points.isEmpty()) {
+            pointsBox.addView(text("등록된 포인트가 없습니다. 플로팅 패널의 ＋ 로 추가하세요."))
+            return
+        }
+        config.points.forEachIndexed { i, p ->
+            val edit = numberEdit().apply { setText(p.delayMs.toString()) }
+            delayEdits.add(edit)
+            val del = Button(this).apply {
+                text = "삭제"
+                setOnClickListener {
+                    save()
+                    config.points.removeAt(i)
+                    Store.save(this@MainActivity, config)
+                    ClickService.instance?.reload()
+                    renderPoints()
+                }
+            }
+            val line = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = "#${i + 1}  (${p.x}, ${p.y})\n대기(ms)"
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(edit, LinearLayout.LayoutParams(dp(110), LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(del)
+            }
+            pointsBox.addView(line)
+        }
+    }
+
+    /** 입력값을 검증해 저장. 잘못된 값이 있으면 false. */
+    private fun save(): Boolean {
+        val repeat = repeatEdit.text.toString().toIntOrNull()
+        val loopDelay = loopDelayEdit.text.toString().toLongOrNull()
+        val delays = delayEdits.map { it.text.toString().toLongOrNull() }
+        if (repeat == null || repeat < 0 || loopDelay == null || loopDelay < 0 ||
+            delays.any { it == null || it < 0 }
+        ) {
+            Toast.makeText(this, "숫자를 올바르게 입력하세요 (0 이상)", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        // 서비스에서 마커를 옮겼을 수 있으므로 최신 좌표를 다시 읽어 대기값만 덮어쓴다
+        val latest = Store.load(this)
+        if (latest.points.size == delays.size) {
+            latest.points.forEachIndexed { i, p -> p.delayMs = delays[i]!! }
+        }
+        latest.repeat = repeat
+        latest.loopDelayMs = loopDelay
+        Store.save(this, latest)
+        config = latest
+        ClickService.instance?.reload()
+        return true
+    }
+
+    // ------------------------------------------------------------- widgets
+    private fun title(s: String) = TextView(this).apply {
+        text = s
+        textSize = 18f
+        setTypeface(typeface, Typeface.BOLD)
+        setPadding(0, dp(16), 0, dp(4))
+    }
+
+    private fun text(s: String) = TextView(this).apply {
+        text = s
+        textSize = 14f
+        setPadding(0, dp(2), 0, dp(2))
+    }
+
+    private fun button(s: String, onClick: () -> Unit) = Button(this).apply {
+        text = s
+        setOnClickListener { onClick() }
+    }
+
+    private fun numberEdit() = EditText(this).apply {
+        inputType = InputType.TYPE_CLASS_NUMBER
+        setSingleLine()
+    }
+
+    private fun row(label: String, edit: EditText) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(TextView(this@MainActivity).apply {
+            text = label
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        addView(edit, LinearLayout.LayoutParams(dp(110), LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+}
