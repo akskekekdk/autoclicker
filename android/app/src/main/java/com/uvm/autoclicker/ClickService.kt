@@ -18,7 +18,6 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -48,7 +47,8 @@ class ClickService : AccessibilityService() {
 
     private var panel: View? = null
     private lateinit var expandedView: LinearLayout
-    private lateinit var bubble: TextView
+    private lateinit var foldBtn: TextView
+    private var foldable: List<View> = emptyList()
     private var minimized = false
     private lateinit var panelParams: WindowManager.LayoutParams
     private lateinit var playBtn: TextView
@@ -199,60 +199,41 @@ class ClickService : AccessibilityService() {
             layoutParams = LinearLayout.LayoutParams(dp(52), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
 
+        foldBtn = panelButton("▲", "접기") { setMinimized(!minimized) }
+        // 접었을 때 숨길 버튼들 (핸들과 접기/펼치기 버튼은 항상 보임)
+        foldable = listOf(
+            playBtn,
+            panelButton("＋", "추가") { addPoint() },
+            panelButton("－", "삭제") { removeLastPoint() },
+            panelButton("⚙", "설정") { openSettings() },
+            panelButton("✕", "닫기") { hidePanel() },
+            infoText,
+        )
+
         expandedView.addView(handle)
-        expandedView.addView(playBtn)
-        expandedView.addView(panelButton("＋", "추가") { addPoint() })
-        expandedView.addView(panelButton("－", "삭제") { removeLastPoint() })
-        expandedView.addView(panelButton("⚙", "설정") { openSettings() })
-        expandedView.addView(panelButton("▁", "줄이기") { setMinimized(true) })
-        expandedView.addView(panelButton("✕", "닫기") { hidePanel() })
+        foldable.dropLast(1).forEach { expandedView.addView(it) }
+        expandedView.addView(foldBtn)
         expandedView.addView(infoText)
 
-        // 줄였을 때 보이는 작은 동그라미: 탭하면 펼치고, 끌면 이동
-        bubble = TextView(this).apply {
-            text = "⠿"
-            textSize = 18f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            layoutParams = FrameLayout.LayoutParams(dp(44), dp(44))
-            visibility = View.GONE
-        }
-
-        val container = FrameLayout(this)
-        container.addView(expandedView)
-        container.addView(bubble)
-
         panelParams = overlayParams(0, resources.displayMetrics.heightPixels / 4)
-        makeDraggable(handle, container, panelParams)
-        makeDraggable(bubble, container, panelParams, onTap = { setMinimized(false) })
-        wm.addView(container, panelParams)
-        panel = container
-        minimized = false
-        updateBubble()
+        makeDraggable(handle, expandedView, panelParams)
+        wm.addView(expandedView, panelParams)
+        panel = expandedView
+        setMinimized(false)
         updateInfo()
     }
 
-    /** 패널을 작은 동그라미로 줄이거나 다시 펼친다. 실행 중이 아니면 마커도 함께 숨긴다. */
+    /** 패널을 접거나 펼친다. 같은 버튼을 다시 누르면 반대로 동작. 실행 중이 아니면 마커도 함께 숨긴다. */
     private fun setMinimized(value: Boolean) {
         minimized = value
-        expandedView.visibility = if (value) View.GONE else View.VISIBLE
-        bubble.visibility = if (value) View.VISIBLE else View.GONE
+        foldable.forEach { it.visibility = if (value) View.GONE else View.VISIBLE }
+        foldBtn.text = if (value) buttonText("▼", "펼치기") else buttonText("▲", "접기")
         applyMarkerVisibility()
     }
 
     private fun applyMarkerVisibility() {
         val visible = !minimized || running
         markers.forEach { it.view.visibility = if (visible) View.VISIBLE else View.GONE }
-    }
-
-    /** 줄인 상태의 동그라미 색: 실행 중이면 초록, 아니면 회색. */
-    private fun updateBubble() {
-        if (!::bubble.isInitialized) return
-        bubble.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(if (running) Color.parseColor("#DD00C853") else Color.parseColor("#DD222222"))
-            setStroke(dp(2), Color.WHITE)
-        }
     }
 
     private fun markerBackground(active: Boolean) = GradientDrawable().apply {
@@ -358,7 +339,6 @@ class ClickService : AccessibilityService() {
         cycle = 0
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
-        updateBubble()
         updateInfo()
         tapCurrent()
     }
@@ -371,7 +351,6 @@ class ClickService : AccessibilityService() {
         markers.forEach { it.view.background = markerBackground(false) }
         setMarkersTouchable(true)
         applyMarkerVisibility()
-        updateBubble()
         updateInfo()
     }
 
