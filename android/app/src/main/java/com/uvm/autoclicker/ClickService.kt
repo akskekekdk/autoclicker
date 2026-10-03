@@ -10,12 +10,15 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.SpannableString
+import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -44,6 +47,9 @@ class ClickService : AccessibilityService() {
     private val markers = mutableListOf<Marker>()
 
     private var panel: View? = null
+    private lateinit var expandedView: LinearLayout
+    private lateinit var bubble: TextView
+    private var minimized = false
     private lateinit var panelParams: WindowManager.LayoutParams
     private lateinit var playBtn: TextView
     private lateinit var infoText: TextView
@@ -151,14 +157,19 @@ class ClickService : AccessibilityService() {
         }
     }
 
-    private fun panelButton(text: String, onClick: () -> Unit) = TextView(this).apply {
-        this.text = text
-        textSize = 20f
+    /** 아이콘 아래에 작은 글씨로 기능 이름을 붙인 패널 버튼. */
+    private fun panelButton(icon: String, label: String, onClick: () -> Unit) = TextView(this).apply {
+        text = buttonText(icon, label)
+        textSize = 18f
         gravity = Gravity.CENTER
         setTextColor(Color.WHITE)
-        val s = dp(44)
-        layoutParams = LinearLayout.LayoutParams(s, s)
+        setLineSpacing(0f, 0.9f)
+        layoutParams = LinearLayout.LayoutParams(dp(52), dp(50))
         setOnClickListener { onClick() }
+    }
+
+    private fun buttonText(icon: String, label: String) = SpannableString("$icon\n$label").apply {
+        setSpan(RelativeSizeSpan(0.5f), icon.length + 1, length, 0)
     }
 
     private fun buildPanel() {
@@ -166,7 +177,7 @@ class ClickService : AccessibilityService() {
             setColor(Color.parseColor("#DD222222"))
             cornerRadius = dp(12).toFloat()
         }
-        val layout = LinearLayout(this).apply {
+        expandedView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             background = bg
@@ -178,29 +189,70 @@ class ClickService : AccessibilityService() {
             textSize = 18f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(28))
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(28))
         }
-        playBtn = panelButton("▶") { toggle() }
+        playBtn = panelButton("▶", "시작") { toggle() }
         infoText = TextView(this).apply {
             textSize = 10f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
-            layoutParams = LinearLayout.LayoutParams(dp(44), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(52), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
 
-        layout.addView(handle)
-        layout.addView(playBtn)
-        layout.addView(panelButton("＋") { addPoint() })
-        layout.addView(panelButton("－") { removeLastPoint() })
-        layout.addView(panelButton("⚙") { openSettings() })
-        layout.addView(panelButton("✕") { hidePanel() })
-        layout.addView(infoText)
+        expandedView.addView(handle)
+        expandedView.addView(playBtn)
+        expandedView.addView(panelButton("＋", "추가") { addPoint() })
+        expandedView.addView(panelButton("－", "삭제") { removeLastPoint() })
+        expandedView.addView(panelButton("⚙", "설정") { openSettings() })
+        expandedView.addView(panelButton("▁", "줄이기") { setMinimized(true) })
+        expandedView.addView(panelButton("✕", "닫기") { hidePanel() })
+        expandedView.addView(infoText)
+
+        // 줄였을 때 보이는 작은 동그라미: 탭하면 펼치고, 끌면 이동
+        bubble = TextView(this).apply {
+            text = "⠿"
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            layoutParams = FrameLayout.LayoutParams(dp(44), dp(44))
+            visibility = View.GONE
+        }
+
+        val container = FrameLayout(this)
+        container.addView(expandedView)
+        container.addView(bubble)
 
         panelParams = overlayParams(0, resources.displayMetrics.heightPixels / 4)
-        makeDraggable(handle, layout, panelParams)
-        wm.addView(layout, panelParams)
-        panel = layout
+        makeDraggable(handle, container, panelParams)
+        makeDraggable(bubble, container, panelParams, onTap = { setMinimized(false) })
+        wm.addView(container, panelParams)
+        panel = container
+        minimized = false
+        updateBubble()
         updateInfo()
+    }
+
+    /** 패널을 작은 동그라미로 줄이거나 다시 펼친다. 실행 중이 아니면 마커도 함께 숨긴다. */
+    private fun setMinimized(value: Boolean) {
+        minimized = value
+        expandedView.visibility = if (value) View.GONE else View.VISIBLE
+        bubble.visibility = if (value) View.VISIBLE else View.GONE
+        applyMarkerVisibility()
+    }
+
+    private fun applyMarkerVisibility() {
+        val visible = !minimized || running
+        markers.forEach { it.view.visibility = if (visible) View.VISIBLE else View.GONE }
+    }
+
+    /** 줄인 상태의 동그라미 색: 실행 중이면 초록, 아니면 회색. */
+    private fun updateBubble() {
+        if (!::bubble.isInitialized) return
+        bubble.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (running) Color.parseColor("#DD00C853") else Color.parseColor("#DD222222"))
+            setStroke(dp(2), Color.WHITE)
+        }
     }
 
     private fun markerBackground(active: Boolean) = GradientDrawable().apply {
@@ -236,6 +288,7 @@ class ClickService : AccessibilityService() {
     private fun rebuildMarkers() {
         removeMarkers()
         config.points.forEachIndexed { i, p -> markers.add(createMarker(i + 1, p)) }
+        applyMarkerVisibility()
         updateInfo()
     }
 
@@ -303,8 +356,9 @@ class ClickService : AccessibilityService() {
         running = true
         index = 0
         cycle = 0
-        playBtn.text = "■"
+        playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
+        updateBubble()
         updateInfo()
         tapCurrent()
     }
@@ -313,9 +367,11 @@ class ClickService : AccessibilityService() {
         if (!running) return
         running = false
         handler.removeCallbacksAndMessages(null)
-        if (::playBtn.isInitialized) playBtn.text = "▶"
+        if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEach { it.view.background = markerBackground(false) }
         setMarkersTouchable(true)
+        applyMarkerVisibility()
+        updateBubble()
         updateInfo()
     }
 
