@@ -2,7 +2,7 @@
 
 여러 화면 위치를 순서대로, 지정한 간격으로 반복 클릭하는 앱입니다.
 
-- **안드로이드 휴대폰**: `android/` (설치 파일: `release/AutoClicker.apk`)
+- **안드로이드 휴대폰**: `android/` (설치 파일: [Releases](https://github.com/akskekekdk/autoclicker/releases/latest)의 `AutoClicker-v*.apk`)
 - **PC** (Windows / macOS / Linux X11): `auto_clicker.py`
 
 ---
@@ -10,7 +10,7 @@
 ## 📱 안드로이드 앱
 
 ### 설치
-1. `release/AutoClicker.apk`를 휴대폰으로 옮겨 실행합니다. ("출처를 알 수 없는 앱" 설치 허용 필요)
+1. [최신 Release](https://github.com/akskekekdk/autoclicker/releases/latest)에서 APK를 받아 설치합니다. ("출처를 알 수 없는 앱" 설치 허용 필요)
 2. 앱을 열고 **접근성 설정 열기** → 설치된 앱 → **오토 클리커** → 사용
    - Android 13 이상에서 회색으로 막혀 있으면: 설정 → 앱 → 오토 클리커 → 우측 상단 ⋮ → **제한된 설정 허용** 후 다시 켭니다.
 3. 접근성을 켜면 화면 왼쪽에 **플로팅 패널**이 나타납니다.
@@ -29,6 +29,16 @@
 - 반복 횟수 0 = 무한 반복. 실행 중에는 원이 반투명해지고 터치가 통과되며, 현재 터치 중인 원이 초록색으로 표시됩니다.
 - 설정과 위치는 자동 저장됩니다.
 - 루팅 없이 동작하며 Android 7.0 이상 지원. **iPhone(iOS)은 앱이 다른 앱 화면을 터치하는 것을 허용하지 않아 지원할 수 없습니다.**
+
+### 앱 내 업데이트
+앱 설정 화면 맨 위 **앱 업데이트**에서 새 버전을 확인하고 바로 설치할 수 있습니다.
+`android/` 코드가 바뀌어 푸시되면 GitHub Actions(`.github/workflows/android-release.yml`)가 서명된 APK를 빌드해 Release `v<번호>`로 올립니다.
+
+서명 키는 저장소 Secrets에 있어야 합니다 (Settings → Secrets and variables → Actions):
+- `KEYSTORE_BASE64`: PKCS12 키 파일(별칭 `autoclicker`)을 base64로 인코딩한 값
+- `KEYSTORE_PASSWORD`: 키 비밀번호
+
+키를 바꾸면 이미 설치된 앱은 업데이트되지 않으니(삭제 후 재설치 필요) 키 파일은 안전하게 보관하세요.
 
 ### 직접 빌드
 ```bash

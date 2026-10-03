@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -25,6 +27,11 @@ class MainActivity : Activity() {
     private lateinit var loopDelayEdit: EditText
     private lateinit var pointsBox: LinearLayout
 
+    private lateinit var updateText: TextView
+    private lateinit var updateBtn: Button
+    private var latest: Updater.Release? = null
+    private var updating = false
+
     private var config = Config()
     private val delayEdits = mutableListOf<EditText>()
 
@@ -37,6 +44,12 @@ class MainActivity : Activity() {
             setPadding(dp(16), dp(16), dp(16), dp(24))
         }
         setContentView(ScrollView(this).apply { addView(root) })
+
+        root.addView(title("앱 업데이트"))
+        updateText = text("현재 버전 ${Updater.currentVersionName(this)}")
+        root.addView(updateText)
+        updateBtn = button("업데이트 확인") { onUpdateClicked() }
+        root.addView(updateBtn)
 
         root.addView(title("1. 접근성 권한"))
         root.addView(text(
@@ -77,6 +90,69 @@ class MainActivity : Activity() {
         root.addView(button("저장") {
             if (save()) Toast.makeText(this, "저장했습니다", Toast.LENGTH_SHORT).show()
         })
+
+        checkUpdate()
+    }
+
+    // ------------------------------------------------------------- updates
+    private fun checkUpdate() {
+        updateText.text = "현재 버전 ${Updater.currentVersionName(this)} · 확인 중..."
+        Thread {
+            val result = runCatching { Updater.fetchLatest() }
+            runOnUiThread {
+                val current = Updater.currentVersionName(this)
+                val release = result.getOrNull()
+                latest = release
+                when {
+                    result.isFailure -> {
+                        updateText.text = "현재 버전 $current · 업데이트 확인 실패 (인터넷 연결 확인)"
+                        updateBtn.text = "업데이트 확인"
+                    }
+                    release != null && release.versionCode > Updater.currentVersionCode(this) -> {
+                        updateText.text = "현재 버전 $current · 새 버전 ${release.tag} 있음"
+                        updateBtn.text = "업데이트 설치 (${release.tag})"
+                    }
+                    else -> {
+                        updateText.text = "현재 버전 $current · 최신 버전입니다"
+                        updateBtn.text = "업데이트 확인"
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun onUpdateClicked() {
+        if (updating) return
+        val release = latest
+        if (release == null || release.versionCode <= Updater.currentVersionCode(this)) {
+            checkUpdate()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(this, "'이 출처 허용'을 켠 뒤 다시 눌러주세요", Toast.LENGTH_LONG).show()
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+            )
+            return
+        }
+        updating = true
+        updateBtn.isEnabled = false
+        Thread {
+            val result = runCatching {
+                Updater.downloadAndInstall(this, release.apkUrl) { pct ->
+                    runOnUiThread { updateText.text = "다운로드 중... $pct%" }
+                }
+            }
+            runOnUiThread {
+                updating = false
+                updateBtn.isEnabled = true
+                updateText.text = if (result.isSuccess) {
+                    "설치 화면에서 '업데이트'를 눌러주세요"
+                } else {
+                    "업데이트 실패: ${result.exceptionOrNull()?.message}"
+                }
+            }
+        }.start()
     }
 
     override fun onResume() {
