@@ -1,18 +1,24 @@
 package com.uvm.autoclicker
 
-import android.app.PendingIntent
-import android.content.BroadcastReceiver
+import android.app.Activity
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageInstaller
+import android.database.Cursor
+import android.database.MatrixCursor
+import android.net.Uri
 import android.os.Build
-import android.widget.Toast
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import org.json.JSONObject
+import java.io.File
+import java.io.FileNotFoundException
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * GitHub Releases의 최신 버전을 확인하고, 새 APK를 내려받아 PackageInstaller로 설치한다.
+ * GitHub Releases의 최신 버전을 확인하고, 새 APK를 내려받아 시스템 설치 화면으로 연다.
  * 릴리스 태그는 "v<versionCode>" 형식이며 .apk 파일이 첨부되어 있어야 한다.
  */
 object Updater {
@@ -53,62 +59,86 @@ object Updater {
         }
     }
 
-    /** APK를 내려받아 설치 세션에 쓰고 커밋한다. 백그라운드 스레드에서 호출. */
-    fun downloadAndInstall(ctx: Context, url: String, onProgress: (Int) -> Unit) {
+    /** 최신 릴리스 페이지 (브라우저로 직접 받을 때). */
+    const val RELEASES_URL = "https://github.com/$REPO/releases/latest"
+
+    private const val APK_MIME = "application/vnd.android.package-archive"
+
+    /** APK를 앱 캐시에 내려받는다. 백그라운드 스레드에서 호출. */
+    fun download(ctx: Context, url: String, onProgress: (Int) -> Unit): File {
+        val file = ApkProvider.apkFile(ctx)
+        file.parentFile?.mkdirs()
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 30_000
         try {
             if (conn.responseCode != 200) throw IllegalStateException("HTTP ${conn.responseCode}")
             val total = conn.contentLengthLong
-            val installer = ctx.packageManager.packageInstaller
-            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-            val sessionId = installer.createSession(params)
-            installer.openSession(sessionId).use { session ->
-                session.openWrite("update.apk", 0, total).use { out ->
-                    conn.inputStream.use { input ->
-                        val buf = ByteArray(64 * 1024)
-                        var done = 0L
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            out.write(buf, 0, n)
-                            done += n
-                            if (total > 0) onProgress((done * 100 / total).toInt())
-                        }
+            conn.inputStream.use { input ->
+                file.outputStream().use { out ->
+                    val buf = ByteArray(64 * 1024)
+                    var done = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        done += n
+                        if (total > 0) onProgress((done * 100 / total).toInt())
                     }
-                    session.fsync(out)
                 }
-                val flags = if (Build.VERSION.SDK_INT >= 31) {
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                } else {
-                    PendingIntent.FLAG_UPDATE_CURRENT
-                }
-                val pending = PendingIntent.getBroadcast(
-                    ctx, sessionId, Intent(ctx, InstallReceiver::class.java), flags,
-                )
-                session.commit(pending.intentSender)
             }
         } finally {
             conn.disconnect()
         }
+        return file
+    }
+
+    /** 내려받은 APK를 시스템 설치 화면으로 연다 (파일 관리자에서 APK를 누른 것과 같은 방식). */
+    fun openInstaller(activity: Activity) {
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(ApkProvider.uri(activity), APK_MIME)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.startActivity(intent)
+    }
+
+    fun openReleasePage(activity: Activity) {
+        activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES_URL)))
     }
 }
 
-/** 설치 세션 결과 수신: 사용자 확인이 필요하면 시스템 설치 화면을 띄운다. */
-class InstallReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                @Suppress("DEPRECATION")
-                val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return
-                context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
-            PackageInstaller.STATUS_SUCCESS -> Unit
-            else -> {
-                val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "알 수 없는 오류"
-                Toast.makeText(context, "업데이트 실패: $msg", Toast.LENGTH_LONG).show()
-            }
+/** 내려받은 업데이트 APK 하나를 설치 프로그램에 읽기 전용으로 넘겨주는 최소 ContentProvider. */
+class ApkProvider : ContentProvider() {
+    companion object {
+        private const val FILE_NAME = "update.apk"
+
+        fun apkFile(ctx: Context) = File(File(ctx.cacheDir, "updates"), FILE_NAME)
+
+        fun uri(ctx: Context): Uri = Uri.parse("content://${ctx.packageName}.apk/$FILE_NAME")
+    }
+
+    override fun onCreate() = true
+
+    override fun getType(uri: Uri) = "application/vnd.android.package-archive"
+
+    override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+        if (uri.lastPathSegment != FILE_NAME) throw FileNotFoundException(uri.toString())
+        return ParcelFileDescriptor.open(apkFile(context!!), ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
+    override fun query(
+        uri: Uri, projection: Array<out String>?, selection: String?,
+        selectionArgs: Array<out String>?, sortOrder: String?,
+    ): Cursor {
+        // 설치 프로그램이 파일 이름/크기를 물어볼 때 응답
+        val file = apkFile(context!!)
+        return MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
+            addRow(arrayOf<Any>(FILE_NAME, file.length()))
         }
     }
+
+    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+    override fun update(
+        uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?,
+    ) = 0
 }

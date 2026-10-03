@@ -20,9 +20,11 @@
             </intent-filter>
         </activity>
 
-        <receiver
-            android:name=".InstallReceiver"
-            android:exported="false" />
+        <provider
+            android:name=".ApkProvider"
+            android:authorities="${applicationId}.apk"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <service
             android:name=".ClickService"

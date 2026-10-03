@@ -50,6 +50,7 @@ class MainActivity : Activity() {
         root.addView(updateText)
         updateBtn = button("업데이트 확인") { onUpdateClicked() }
         root.addView(updateBtn)
+        root.addView(button("브라우저로 받기") { Updater.openReleasePage(this) })
 
         root.addView(title("1. 접근성 권한"))
         root.addView(text(
@@ -140,17 +141,20 @@ class MainActivity : Activity() {
         updateBtn.isEnabled = false
         Thread {
             val result = runCatching {
-                Updater.downloadAndInstall(this, release.apkUrl) { pct ->
+                Updater.download(this, release.apkUrl) { pct ->
                     runOnUiThread { updateText.text = "다운로드 중... $pct%" }
                 }
             }
             runOnUiThread {
                 updating = false
                 updateBtn.isEnabled = true
-                updateText.text = if (result.isSuccess) {
-                    "설치 화면에서 '업데이트'를 눌러주세요"
+                if (result.isSuccess) {
+                    updateText.text = "설치 화면에서 '업데이트'를 눌러주세요"
+                    runCatching { Updater.openInstaller(this) }.onFailure {
+                        updateText.text = "설치 화면을 열지 못했습니다: ${it.message}\n'브라우저로 받기'를 눌러 직접 설치하세요"
+                    }
                 } else {
-                    "업데이트 실패: ${result.exceptionOrNull()?.message}"
+                    updateText.text = "다운로드 실패: ${result.exceptionOrNull()?.message}\n'브라우저로 받기'를 눌러 직접 설치하세요"
                 }
             }
         }.start()
