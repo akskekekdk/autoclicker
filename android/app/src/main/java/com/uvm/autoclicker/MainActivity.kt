@@ -33,7 +33,9 @@ class MainActivity : Activity() {
     private var updating = false
 
     private var config = Config()
+    private lateinit var defaultDelayEdit: EditText
     private val delayEdits = mutableListOf<EditText>()
+    private val tapsEdits = mutableListOf<EditText>()
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -72,12 +74,12 @@ class MainActivity : Activity() {
                 "  ⠿ 끌어서 패널 이동\n" +
                 "  ▶ / ■ 시작 / 정지\n" +
                 "  ＋ 터치 위치 추가 (빨간 원을 원하는 곳으로 끌어다 놓기)\n" +
-                "  빨간 원 탭: 그 포인트의 대기 시간(ms) 입력 (기본 ${DEFAULT_DELAY_MS})\n" +
+                "  빨간 원 탭: 그 포인트의 대기 시간(ms)과 연속 터치 횟수 입력\n" +
                 "  － 마지막 위치 삭제\n" +
                 "  ⚙ 이 설정 화면 열기\n" +
                 "  ▲ 접기 / ▼ 펼치기 (같은 버튼을 다시 누르면 펼쳐짐)\n" +
                 "  ✕ 패널 닫기 (이 화면에서 다시 열 수 있음)\n" +
-                "번호 순서대로 터치하며, 각 포인트의 '대기'만큼 기다린 뒤 다음 포인트를 터치합니다."
+                "번호 순서대로 터치합니다. 각 포인트를 '횟수'만큼 연속 터치하고, 매 터치 후 '대기'만큼 기다립니다."
         ))
 
         root.addView(title("3. 반복 설정"))
@@ -85,8 +87,10 @@ class MainActivity : Activity() {
         loopDelayEdit = numberEdit()
         root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
         root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
+        defaultDelayEdit = numberEdit()
+        root.addView(row("새 포인트 기본 대기 (ms)", defaultDelayEdit))
 
-        root.addView(title("4. 포인트별 대기 시간"))
+        root.addView(title("4. 포인트별 대기 시간 / 터치 횟수"))
         pointsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(pointsBox)
 
@@ -166,6 +170,7 @@ class MainActivity : Activity() {
         config = Store.load(this)
         repeatEdit.setText(config.repeat.toString())
         loopDelayEdit.setText(config.loopDelayMs.toString())
+        defaultDelayEdit.setText(config.defaultDelayMs.toString())
         renderPoints()
         renderStatus()
     }
@@ -204,6 +209,7 @@ class MainActivity : Activity() {
     private fun renderPoints() {
         pointsBox.removeAllViews()
         delayEdits.clear()
+        tapsEdits.clear()
         if (config.points.isEmpty()) {
             pointsBox.addView(text("등록된 포인트가 없습니다. 플로팅 패널의 ＋ 로 추가하세요."))
             return
@@ -211,6 +217,8 @@ class MainActivity : Activity() {
         config.points.forEachIndexed { i, p ->
             val edit = numberEdit().apply { setText(p.delayMs.toString()) }
             delayEdits.add(edit)
+            val tapsEdit = numberEdit().apply { setText(p.taps.toString()) }
+            tapsEdits.add(tapsEdit)
             val del = Button(this).apply {
                 text = "삭제"
                 setOnClickListener {
@@ -221,14 +229,17 @@ class MainActivity : Activity() {
                     renderPoints()
                 }
             }
+            pointsBox.addView(text("#${i + 1}  (${p.x}, ${p.y})").apply {
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, dp(8), 0, 0)
+            })
             val line = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(this@MainActivity).apply {
-                    text = "#${i + 1}  (${p.x}, ${p.y})\n대기(ms)"
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                })
-                addView(edit, LinearLayout.LayoutParams(dp(110), LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(TextView(this@MainActivity).apply { text = "대기(ms)" })
+                addView(edit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(this@MainActivity).apply { text = " 횟수" })
+                addView(tapsEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 0.6f))
                 addView(del)
             }
             pointsBox.addView(line)
@@ -239,20 +250,27 @@ class MainActivity : Activity() {
     private fun save(): Boolean {
         val repeat = repeatEdit.text.toString().toIntOrNull()
         val loopDelay = loopDelayEdit.text.toString().toLongOrNull()
+        val defaultDelay = defaultDelayEdit.text.toString().toLongOrNull()
         val delays = delayEdits.map { it.text.toString().toLongOrNull() }
+        val taps = tapsEdits.map { it.text.toString().toIntOrNull() }
         if (repeat == null || repeat < 0 || loopDelay == null || loopDelay < 0 ||
-            delays.any { it == null || it < 0 }
+            defaultDelay == null || defaultDelay < 0 ||
+            delays.any { it == null || it < 0 } || taps.any { it == null || it < 1 }
         ) {
-            Toast.makeText(this, "숫자를 올바르게 입력하세요 (0 이상)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "숫자를 올바르게 입력하세요 (대기 0 이상, 횟수 1 이상)", Toast.LENGTH_SHORT).show()
             return false
         }
         // 서비스에서 마커를 옮겼을 수 있으므로 최신 좌표를 다시 읽어 대기값만 덮어쓴다
         val latest = Store.load(this)
         if (latest.points.size == delays.size) {
-            latest.points.forEachIndexed { i, p -> p.delayMs = delays[i]!! }
+            latest.points.forEachIndexed { i, p ->
+                p.delayMs = delays[i]!!
+                p.taps = taps[i]!!
+            }
         }
         latest.repeat = repeat
         latest.loopDelayMs = loopDelay
+        latest.defaultDelayMs = defaultDelay
         Store.save(this, latest)
         config = latest
         ClickService.instance?.reload()

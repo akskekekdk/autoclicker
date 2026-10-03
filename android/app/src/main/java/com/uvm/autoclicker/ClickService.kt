@@ -61,6 +61,8 @@ class ClickService : AccessibilityService() {
 
     private var running = false
     private var index = 0
+    /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
+    private var tapRepeat = 0
     private var cycle = 0
 
     private val markerPx by lazy { dp(MARKER_DP) }
@@ -247,14 +249,17 @@ class ClickService : AccessibilityService() {
         setStroke(dp(2), Color.WHITE)
     }
 
-    /** 마커 글자: 큰 번호 + 작은 대기시간(ms). */
-    private fun markerText(number: Int, delayMs: Long) = SpannableString("$number\n${delayMs}").apply {
-        setSpan(RelativeSizeSpan(0.6f), number.toString().length + 1, length, 0)
+    /** 마커 글자: 큰 번호 + 작은 대기시간(ms), 여러 번 터치하면 "×횟수". */
+    private fun markerText(number: Int, point: ClickPoint): SpannableString {
+        val detail = if (point.taps > 1) "${point.delayMs}×${point.taps}" else "${point.delayMs}"
+        return SpannableString("$number\n$detail").apply {
+            setSpan(RelativeSizeSpan(0.55f), number.toString().length + 1, length, 0)
+        }
     }
 
     private fun createMarker(number: Int, point: ClickPoint): Marker {
         val view = TextView(this).apply {
-            text = markerText(number, point.delayMs)
+            text = markerText(number, point)
             textSize = 15f
             setLineSpacing(0f, 0.85f)
             gravity = Gravity.CENTER
@@ -269,49 +274,61 @@ class ClickService : AccessibilityService() {
         val marker = Marker(view, params)
         makeDraggable(
             view, view, params,
-            onTap = { editDelay(number - 1) },
+            onTap = { editPoint(number - 1) },
             onDragEnd = { savePositions() },
         )
         wm.addView(view, params)
         return marker
     }
 
-    /** 마커를 탭하면 그 포인트의 '터치 후 대기 시간'을 바로 입력하는 창을 띄운다. */
-    private fun editDelay(index: Int) {
+    /** 마커를 탭하면 그 포인트의 대기 시간과 터치 횟수를 바로 입력하는 창을 띄운다. */
+    private fun editPoint(index: Int) {
         if (running || index !in config.points.indices) return
         val point = config.points[index]
-        val input = EditText(ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)).apply {
+        val theme = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        fun numberInput(value: Number) = EditText(theme).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
-            setText(point.delayMs.toString())
+            setText(value.toString())
             setSelectAllOnFocus(true)
         }
-        val box = FrameLayout(this).apply {
+        fun label(s: String) = TextView(theme).apply { text = s }
+        val delayInput = numberInput(point.delayMs)
+        val tapsInput = numberInput(point.taps)
+        val box = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), 0)
-            addView(input)
+            addView(label("터치 후 대기 시간 (ms)"))
+            addView(delayInput)
+            addView(label("이 위치 연속 터치 횟수"))
+            addView(tapsInput)
         }
-        val apply = { value: Long ->
-            point.delayMs = value
+        val apply = { delay: Long, taps: Int ->
+            point.delayMs = delay
+            point.taps = taps
             Store.save(this, config)
-            markers.getOrNull(index)?.view?.text = markerText(index + 1, value)
+            markers.getOrNull(index)?.view?.text = markerText(index + 1, point)
         }
-        val dialog = AlertDialog.Builder(ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert))
-            .setTitle("${index + 1}번 터치 후 대기 시간 (ms)")
+        val dialog = AlertDialog.Builder(theme)
+            .setTitle("${index + 1}번 포인트")
             .setView(box)
             .setPositiveButton("저장") { _, _ ->
-                val v = input.text.toString().toLongOrNull()
-                if (v == null || v < 0) {
-                    Toast.makeText(this, "0 이상의 숫자를 입력하세요", Toast.LENGTH_SHORT).show()
+                val delay = delayInput.text.toString().toLongOrNull()
+                val taps = tapsInput.text.toString().toIntOrNull()
+                if (delay == null || delay < 0 || taps == null || taps < 1) {
+                    Toast.makeText(this, "대기는 0 이상, 횟수는 1 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
                 } else {
-                    apply(v)
+                    apply(delay, taps)
                 }
             }
-            .setNeutralButton("기본값 ${DEFAULT_DELAY_MS}") { _, _ -> apply(DEFAULT_DELAY_MS) }
+            .setNeutralButton("기본값 ${config.defaultDelayMs}ms") { _, _ ->
+                apply(config.defaultDelayMs, point.taps)
+            }
             .setNegativeButton("취소", null)
             .create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dialog.show()
-        input.requestFocus()
+        delayInput.requestFocus()
     }
 
     private fun removeMarkers() {
@@ -361,7 +378,7 @@ class ClickService : AccessibilityService() {
         if (running) return
         val dm = resources.displayMetrics
         val offset = dp(24) * (config.points.size % 6)
-        config.points.add(ClickPoint(dm.widthPixels / 2 + offset, dm.heightPixels / 2 + offset, DEFAULT_DELAY_MS))
+        config.points.add(ClickPoint(dm.widthPixels / 2 + offset, dm.heightPixels / 2 + offset, config.defaultDelayMs))
         Store.save(this, config)
         rebuildMarkers()
     }
@@ -388,6 +405,7 @@ class ClickService : AccessibilityService() {
         }
         running = true
         index = 0
+        tapRepeat = 0
         cycle = 0
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
@@ -436,6 +454,12 @@ class ClickService : AccessibilityService() {
 
     private fun next() {
         if (!running) return
+        tapRepeat++
+        if (tapRepeat < config.points[index].taps) {
+            tapCurrent() // 같은 위치를 지정한 횟수만큼 반복
+            return
+        }
+        tapRepeat = 0
         index++
         if (index < markers.size) {
             tapCurrent()
