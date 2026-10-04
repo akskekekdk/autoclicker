@@ -11,6 +11,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.InputType
 import android.text.SpannableString
 import android.text.style.RelativeSizeSpan
@@ -40,6 +41,8 @@ class ClickService : AccessibilityService() {
 
         private const val MARKER_DP = 48
         private const val TAP_DURATION_MS = 40L
+        /** 앱이 보낸 터치가 끝난 뒤 이 시간 안의 터치 신호는 앱 자신의 것으로 본다 */
+        private const val OWN_TOUCH_GRACE_MS = 60L
     }
 
     private class Marker(val view: TextView, val params: WindowManager.LayoutParams)
@@ -60,6 +63,13 @@ class ClickService : AccessibilityService() {
     private lateinit var infoText: TextView
 
     private var running = false
+
+    // 화면 터치 감지: 1px 크기의 보이지 않는 창이 화면 어디든 터치되면 ACTION_OUTSIDE를 받는다.
+    // 앱이 직접 보낸 터치도 같은 신호를 만들므로, 그 시간대의 신호는 무시한다.
+    private var touchWatcher: View? = null
+    private var gestureInFlight = false
+    private var lastGestureEnd = 0L
+    private var stoppedByTouchAt = 0L
     private var index = 0
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
     private var tapRepeat = 0
@@ -396,7 +406,20 @@ class ClickService : AccessibilityService() {
     }
 
     // -------------------------------------------------------------- running
-    private fun toggle() = if (running) stop() else start()
+    private fun toggle() {
+        when {
+            running -> stop()
+            // ■ 버튼을 누른 터치가 이미 '화면 터치 정지'를 일으켰다면 다시 시작하지 않는다
+            SystemClock.uptimeMillis() - stoppedByTouchAt < 700 -> Unit
+            else -> start()
+        }
+    }
+
+    private fun stopByTouch() {
+        stop()
+        stoppedByTouchAt = SystemClock.uptimeMillis()
+        Toast.makeText(this, "화면 터치로 정지했습니다", Toast.LENGTH_SHORT).show()
+    }
 
     private fun start() {
         if (config.points.isEmpty()) {
@@ -409,14 +432,46 @@ class ClickService : AccessibilityService() {
         cycle = 0
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
+        if (config.stopOnTouch) addTouchWatcher()
         updateInfo()
         tapCurrent()
     }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun addTouchWatcher() {
+        val view = View(this)
+        val params = overlayParams(0, 0).apply {
+            width = 1
+            height = 1
+            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+        }
+        view.setOnTouchListener { _, e ->
+            if (e.action == MotionEvent.ACTION_OUTSIDE && running && !isOwnTouch()) stopByTouch()
+            false
+        }
+        wm.addView(view, params)
+        touchWatcher = view
+    }
+
+    private fun removeTouchWatcher() {
+        touchWatcher?.let { wm.removeView(it) }
+        touchWatcher = null
+    }
+
+    /** 앱이 보낸 터치가 진행 중이거나 막 끝난 직후인지 */
+    private fun isOwnTouch() =
+        gestureInFlight || SystemClock.uptimeMillis() - lastGestureEnd < OWN_TOUCH_GRACE_MS
 
     fun stop() {
         if (!running) return
         running = false
         handler.removeCallbacksAndMessages(null)
+        removeTouchWatcher()
+        gestureInFlight = false
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEach { it.view.background = markerBackground(false) }
         setMarkersTouchable(true)
@@ -441,10 +496,31 @@ class ClickService : AccessibilityService() {
             .build()
         val delay = config.points[index].delayMs
         val callback = object : GestureResultCallback() {
-            override fun onCompleted(g: GestureDescription?) = scheduleNext(delay)
-            override fun onCancelled(g: GestureDescription?) = scheduleNext(delay)
+            override fun onCompleted(g: GestureDescription?) {
+                gestureEnded()
+                scheduleNext(delay)
+            }
+
+            override fun onCancelled(g: GestureDescription?) {
+                gestureEnded()
+                // 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
+                if (config.stopOnTouch && running) {
+                    stopByTouch()
+                } else {
+                    scheduleNext(delay)
+                }
+            }
         }
-        if (!dispatchGesture(gesture, callback, handler)) scheduleNext(delay)
+        gestureInFlight = true
+        if (!dispatchGesture(gesture, callback, handler)) {
+            gestureEnded()
+            scheduleNext(delay)
+        }
+    }
+
+    private fun gestureEnded() {
+        gestureInFlight = false
+        lastGestureEnd = SystemClock.uptimeMillis()
     }
 
     private fun scheduleNext(delayMs: Long) {

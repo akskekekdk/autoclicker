@@ -26,6 +26,8 @@ data class Config(
     var loopDelayMs: Long = 0,
     /** ＋로 새로 추가하는 포인트의 대기 시간 */
     var defaultDelayMs: Long = DEFAULT_DELAY_MS,
+    /** 실행 중 사용자가 화면을 터치하면 정지 */
+    var stopOnTouch: Boolean = true,
 )
 
 object Store {
@@ -52,6 +54,7 @@ object Store {
                 o.optInt("repeat", 0),
                 o.optLong("loopDelayMs", 0),
                 o.optLong("defaultDelayMs", DEFAULT_DELAY_MS),
+                o.optBoolean("stopOnTouch", true),
             )
         } catch (e: Exception) {
             Config()
@@ -70,6 +73,7 @@ object Store {
             .put("repeat", cfg.repeat)
             .put("loopDelayMs", cfg.loopDelayMs)
             .put("defaultDelayMs", cfg.defaultDelayMs)
+            .put("stopOnTouch", cfg.stopOnTouch)
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
     }
 }

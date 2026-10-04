@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -34,6 +35,7 @@ class SettingsActivity : Activity() {
 
     private var config = Config()
     private lateinit var defaultDelayEdit: EditText
+    private lateinit var stopOnTouchCheck: CheckBox
     private val delayEdits = mutableListOf<EditText>()
     private val tapsEdits = mutableListOf<EditText>()
 
@@ -89,6 +91,8 @@ class SettingsActivity : Activity() {
         root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
         defaultDelayEdit = numberEdit()
         root.addView(row("새 포인트 기본 대기 (ms)", defaultDelayEdit))
+        stopOnTouchCheck = CheckBox(this).apply { text = "실행 중 화면을 터치하면 정지" }
+        root.addView(stopOnTouchCheck)
 
         root.addView(title("4. 포인트별 대기 시간 / 터치 횟수"))
         pointsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -171,6 +175,7 @@ class SettingsActivity : Activity() {
         repeatEdit.setText(config.repeat.toString())
         loopDelayEdit.setText(config.loopDelayMs.toString())
         defaultDelayEdit.setText(config.defaultDelayMs.toString())
+        stopOnTouchCheck.isChecked = config.stopOnTouch
         renderPoints()
         renderStatus()
     }
@@ -271,6 +276,7 @@ class SettingsActivity : Activity() {
         latest.repeat = repeat
         latest.loopDelayMs = loopDelay
         latest.defaultDelayMs = defaultDelay
+        latest.stopOnTouch = stopOnTouchCheck.isChecked
         Store.save(this, latest)
         config = latest
         ClickService.instance?.reload()
