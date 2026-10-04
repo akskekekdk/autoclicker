@@ -41,8 +41,10 @@ class ClickService : AccessibilityService() {
 
         private const val MARKER_DP = 48
         private const val TAP_DURATION_MS = 40L
-        /** 앱이 보낸 터치가 끝난 뒤 이 시간 안의 터치 신호는 앱 자신의 것으로 본다 */
-        private const val OWN_TOUCH_GRACE_MS = 60L
+        /** 터치 감지층을 통과 상태로 바꾼 뒤 실제 터치를 보내기까지 기다리는 시간 (화면 반영 2프레임) */
+        private const val PASS_THROUGH_MS = 32L
+        /** 앱의 터치가 끝난 뒤 감지층을 다시 켜기까지의 시간 */
+        private const val RESTORE_MS = 16L
     }
 
     private class Marker(val view: TextView, val params: WindowManager.LayoutParams)
@@ -64,11 +66,11 @@ class ClickService : AccessibilityService() {
 
     private var running = false
 
-    // 화면 터치 감지: 1px 크기의 보이지 않는 창이 화면 어디든 터치되면 ACTION_OUTSIDE를 받는다.
-    // 앱이 직접 보낸 터치도 같은 신호를 만들므로, 그 시간대의 신호는 무시한다.
-    private var touchWatcher: View? = null
+    // 화면 터치 감지층 (addTouchCatcher 참고)
+    private var touchCatcher: View? = null
+    private var catcherParams: WindowManager.LayoutParams? = null
     private var gestureInFlight = false
-    private var lastGestureEnd = 0L
+    private var tapSeq = 0
     private var stoppedByTouchAt = 0L
     private var index = 0
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
@@ -432,45 +434,54 @@ class ClickService : AccessibilityService() {
         cycle = 0
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
-        if (config.stopOnTouch) addTouchWatcher()
+        if (config.stopOnTouch) addTouchCatcher()
         updateInfo()
         tapCurrent()
     }
 
+    /**
+     * 실행 중 화면 전체를 덮는 투명한 층. 사용자가 화면을 누르면 이 층이 받아서 정지한다
+     * (누른 터치는 아래 앱으로 전달되지 않음). 앱이 터치를 보낼 때만 잠깐 통과 상태로 바뀐다.
+     */
     @SuppressLint("ClickableViewAccessibility")
-    private fun addTouchWatcher() {
+    private fun addTouchCatcher() {
         val view = View(this)
         val params = overlayParams(0, 0).apply {
-            width = 1
-            height = 1
-            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
         }
         view.setOnTouchListener { _, e ->
-            if (e.action == MotionEvent.ACTION_OUTSIDE && running && !isOwnTouch()) stopByTouch()
-            false
+            // 앱 자신의 터치가 통과 전환보다 먼저 도착한 경우는 무시
+            if (e.actionMasked == MotionEvent.ACTION_DOWN && running && !gestureInFlight) stopByTouch()
+            true
         }
         wm.addView(view, params)
-        touchWatcher = view
+        touchCatcher = view
+        catcherParams = params
     }
 
-    private fun removeTouchWatcher() {
-        touchWatcher?.let { wm.removeView(it) }
-        touchWatcher = null
+    private fun removeTouchCatcher() {
+        touchCatcher?.let { wm.removeView(it) }
+        touchCatcher = null
+        catcherParams = null
     }
 
-    /** 앱이 보낸 터치가 진행 중이거나 막 끝난 직후인지 */
-    private fun isOwnTouch() =
-        gestureInFlight || SystemClock.uptimeMillis() - lastGestureEnd < OWN_TOUCH_GRACE_MS
+    private fun setCatcherTouchable(touchable: Boolean) {
+        val view = touchCatcher ?: return
+        val params = catcherParams ?: return
+        params.flags = if (touchable) {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        } else {
+            params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        wm.updateViewLayout(view, params)
+    }
 
     fun stop() {
         if (!running) return
         running = false
         handler.removeCallbacksAndMessages(null)
-        removeTouchWatcher()
+        removeTouchCatcher()
         gestureInFlight = false
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEach { it.view.background = markerBackground(false) }
@@ -494,16 +505,23 @@ class ClickService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, TAP_DURATION_MS))
             .build()
-        val delay = config.points[index].delayMs
+        val catching = touchCatcher != null
+        // 터치 감지층을 통과시키느라 기다린 시간만큼 다음 대기에서 빼서 설정한 간격을 유지한다
+        val delay = if (catching) {
+            (config.points[index].delayMs - PASS_THROUGH_MS).coerceAtLeast(0)
+        } else {
+            config.points[index].delayMs
+        }
+        val seq = ++tapSeq
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
-                gestureEnded()
+                gestureEnded(seq)
                 scheduleNext(delay)
             }
 
             override fun onCancelled(g: GestureDescription?) {
-                gestureEnded()
-                // 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
+                gestureEnded(seq)
+                // 앱이 터치하는 순간 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
                 if (config.stopOnTouch && running) {
                     stopByTouch()
                 } else {
@@ -511,16 +529,25 @@ class ClickService : AccessibilityService() {
                 }
             }
         }
-        gestureInFlight = true
-        if (!dispatchGesture(gesture, callback, handler)) {
-            gestureEnded()
-            scheduleNext(delay)
+        val dispatch = {
+            gestureInFlight = true
+            if (!dispatchGesture(gesture, callback, handler)) {
+                gestureEnded(seq)
+                scheduleNext(delay)
+            }
+        }
+        if (catching) {
+            setCatcherTouchable(false)
+            handler.postDelayed({ if (running && seq == tapSeq) dispatch() }, PASS_THROUGH_MS)
+        } else {
+            dispatch()
         }
     }
 
-    private fun gestureEnded() {
+    private fun gestureEnded(seq: Int) {
         gestureInFlight = false
-        lastGestureEnd = SystemClock.uptimeMillis()
+        // 다음 터치가 이미 시작되지 않았다면 잠시 뒤 감지층을 다시 켠다
+        handler.postDelayed({ if (running && seq == tapSeq) setCatcherTouchable(true) }, RESTORE_MS)
     }
 
     private fun scheduleNext(delayMs: Long) {
