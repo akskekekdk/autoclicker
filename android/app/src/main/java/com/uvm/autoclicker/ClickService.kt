@@ -102,7 +102,7 @@ class ClickService : AccessibilityService() {
         panel = null
     }
 
-    /** MainActivity에서 설정이 바뀌었을 때 호출. */
+    /** SettingsActivity에서 설정이 바뀌었을 때 호출. */
     fun reload() {
         stop()
         config = Store.load(this)
@@ -392,7 +392,7 @@ class ClickService : AccessibilityService() {
 
     private fun openSettings() {
         stop()
-        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     // -------------------------------------------------------------- running
