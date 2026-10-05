@@ -40,11 +40,13 @@ class ClickService : AccessibilityService() {
             private set
 
         private const val MARKER_DP = 48
-        private const val TAP_DURATION_MS = 40L
         /** 터치 감지층을 통과 상태로 바꾼 뒤 실제 터치를 보내기까지 기다리는 시간 (화면 반영 2프레임) */
-        private const val PASS_THROUGH_MS = 32L
+        private const val PASS_THROUGH_MS = 60L
         /** 앱의 터치가 끝난 뒤 감지층을 다시 켜기까지의 시간 */
-        private const val RESTORE_MS = 16L
+        private const val RESTORE_MS = 50L
+        /** 감지층에 가로채인 터치를 다시 누를 때의 대기 시간과 최대 횟수 */
+        private const val RETRY_WAIT_MS = 100L
+        private const val MAX_RETRIES = 2
     }
 
     private class Marker(val view: TextView, val params: WindowManager.LayoutParams)
@@ -71,6 +73,8 @@ class ClickService : AccessibilityService() {
     private var catcherParams: WindowManager.LayoutParams? = null
     private var gestureInFlight = false
     private var tapSeq = 0
+    /** 앱이 보낸 터치가 감지층에 가로채였는지 (감지층 전환이 늦은 경우) */
+    private var ownTapSwallowed = false
     private var stoppedByTouchAt = 0L
     private var index = 0
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
@@ -452,7 +456,9 @@ class ClickService : AccessibilityService() {
         }
         view.setOnTouchListener { _, e ->
             // 앱 자신의 터치가 통과 전환보다 먼저 도착한 경우는 무시
-            if (e.actionMasked == MotionEvent.ACTION_DOWN && running && !gestureInFlight) stopByTouch()
+            if (e.actionMasked == MotionEvent.ACTION_DOWN && running) {
+                if (gestureInFlight) ownTapSwallowed = true else stopByTouch()
+            }
             true
         }
         wm.addView(view, params)
@@ -483,6 +489,7 @@ class ClickService : AccessibilityService() {
         handler.removeCallbacksAndMessages(null)
         removeTouchCatcher()
         gestureInFlight = false
+        ownTapSwallowed = false
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEach { it.view.background = markerBackground(false) }
         setMarkersTouchable(true)
@@ -503,7 +510,7 @@ class ClickService : AccessibilityService() {
 
         val path = Path().apply { moveTo(cx, cy) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, TAP_DURATION_MS))
+            .addStroke(GestureDescription.StrokeDescription(path, 0, config.tapDurationMs))
             .build()
         val catching = touchCatcher != null
         // 터치 감지층을 통과시키느라 기다린 시간만큼 다음 대기에서 빼서 설정한 간격을 유지한다
@@ -513,13 +520,25 @@ class ClickService : AccessibilityService() {
             config.points[index].delayMs
         }
         val seq = ++tapSeq
+        var retries = 0
+        lateinit var dispatch: () -> Unit
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
+                // 감지층이 늦게 비켜서 앱의 터치를 가로챘다면 같은 위치를 다시 누른다
+                if (ownTapSwallowed && running && retries < MAX_RETRIES) {
+                    ownTapSwallowed = false
+                    retries++
+                    setCatcherTouchable(false)
+                    handler.postDelayed({ if (running && seq == tapSeq) dispatch() }, RETRY_WAIT_MS)
+                    return
+                }
+                ownTapSwallowed = false
                 gestureEnded(seq)
                 scheduleNext(delay)
             }
 
             override fun onCancelled(g: GestureDescription?) {
+                ownTapSwallowed = false
                 gestureEnded(seq)
                 // 앱이 터치하는 순간 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
                 if (config.stopOnTouch && running) {
@@ -529,7 +548,7 @@ class ClickService : AccessibilityService() {
                 }
             }
         }
-        val dispatch = {
+        dispatch = {
             gestureInFlight = true
             if (!dispatchGesture(gesture, callback, handler)) {
                 gestureEnded(seq)

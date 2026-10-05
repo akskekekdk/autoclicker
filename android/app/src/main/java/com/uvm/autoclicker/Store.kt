@@ -4,6 +4,9 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** 한 번 터치할 때 누르고 있는 시간의 초기값. 너무 짧으면 일부 앱/게임이 터치를 놓친다. */
+const val DEFAULT_TAP_DURATION_MS = 100L
+
 /** "새 포인트 기본 대기 시간"의 초기값 (설정 화면에서 바꿀 수 있음) */
 const val DEFAULT_DELAY_MS = 150L
 
@@ -28,6 +31,8 @@ data class Config(
     var defaultDelayMs: Long = DEFAULT_DELAY_MS,
     /** 실행 중 사용자가 화면을 터치하면 정지 */
     var stopOnTouch: Boolean = true,
+    /** 한 번 터치할 때 누르고 있는 시간 */
+    var tapDurationMs: Long = DEFAULT_TAP_DURATION_MS,
 )
 
 object Store {
@@ -55,6 +60,7 @@ object Store {
                 o.optLong("loopDelayMs", 0),
                 o.optLong("defaultDelayMs", DEFAULT_DELAY_MS),
                 o.optBoolean("stopOnTouch", true),
+                o.optLong("tapDurationMs", DEFAULT_TAP_DURATION_MS).coerceIn(10, 2000),
             )
         } catch (e: Exception) {
             Config()
@@ -74,6 +80,7 @@ object Store {
             .put("loopDelayMs", cfg.loopDelayMs)
             .put("defaultDelayMs", cfg.defaultDelayMs)
             .put("stopOnTouch", cfg.stopOnTouch)
+            .put("tapDurationMs", cfg.tapDurationMs)
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
     }
 }
