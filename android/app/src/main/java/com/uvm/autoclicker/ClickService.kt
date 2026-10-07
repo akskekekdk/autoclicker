@@ -45,6 +45,11 @@ class ClickService : AccessibilityService() {
         /** 한 제스처로 묶어 보내는 터치 수와 묶음 길이 상한 (정지 반응 속도와의 균형) */
         private const val MAX_BATCH_STROKES = 20
         private const val BATCH_WINDOW_MS = 300L
+        /**
+         * 정지 후 이 시간 동안은 마커가 터치를 받지 않는다. 이미 보낸 묶음의 남은 터치가
+         * 마커에 닿아 설정 창이 열리는 것을 막는다 (묶음 길이 + 여유).
+         */
+        private const val STOP_GRACE_MS = 800L
     }
 
     private class Marker(val view: TextView, val params: WindowManager.LayoutParams)
@@ -71,6 +76,7 @@ class ClickService : AccessibilityService() {
     /** 실행 중 각 포인트의 화면 좌표 */
     private var targets: List<FloatArray> = emptyList()
     private var stoppedByTouchAt = 0L
+    private var stoppedAt = 0L
     private var index = 0
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
     private var tapRepeat = 0
@@ -295,6 +301,8 @@ class ClickService : AccessibilityService() {
     /** 마커를 탭하면 그 포인트의 대기 시간과 터치 횟수를 바로 입력하는 창을 띄운다. */
     private fun editPoint(index: Int) {
         if (running || index !in config.points.indices) return
+        // 정지 직후 남은 자동 터치가 마커에 닿은 경우는 무시
+        if (SystemClock.uptimeMillis() - stoppedAt < STOP_GRACE_MS) return
         val point = config.points[index]
         val theme = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
         fun numberInput(value: Number) = EditText(theme).apply {
@@ -450,9 +458,11 @@ class ClickService : AccessibilityService() {
         running = false
         handler.removeCallbacksAndMessages(null)
         removeTouchCatchers()
+        stoppedAt = SystemClock.uptimeMillis()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEach { it.view.background = markerBackground(false) }
-        setMarkersTouchable(true)
+        // 이미 보낸 터치가 끝날 때까지 기다렸다가 마커를 다시 만질 수 있게 한다
+        handler.postDelayed({ if (!running) setMarkersTouchable(true) }, STOP_GRACE_MS)
         applyMarkerVisibility()
         updateInfo()
     }
