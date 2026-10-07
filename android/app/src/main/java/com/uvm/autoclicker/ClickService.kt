@@ -25,6 +25,9 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
@@ -268,7 +271,8 @@ class ClickService : AccessibilityService() {
 
     /** 마커 글자: 큰 번호 + 작은 대기시간(ms), 여러 번 터치하면 "×횟수". */
     private fun markerText(number: Int, point: ClickPoint): SpannableString {
-        val detail = if (point.taps > 1) "${point.delayMs}×${point.taps}" else "${point.delayMs}"
+        val base = if (point.action == Action.TAP) "${point.delayMs}" else "${point.action.arrow}${point.delayMs}"
+        val detail = if (point.taps > 1) "$base×${point.taps}" else base
         return SpannableString("$number\n$detail").apply {
             setSpan(RelativeSizeSpan(0.55f), number.toString().length + 1, length, 0)
         }
@@ -310,17 +314,48 @@ class ClickService : AccessibilityService() {
             setText(value.toString())
             setSelectAllOnFocus(true)
         }
-        fun label(s: String) = TextView(theme).apply { text = s }
+        fun label(s: String) = TextView(theme).apply {
+            text = s
+            setPadding(0, dp(8), 0, 0)
+        }
         val delayInput = numberInput(point.delayMs)
         val tapsInput = numberInput(point.taps)
+        val swipeDistInput = numberInput(point.swipeDp)
+        val swipeMsInput = numberInput(point.swipeMs)
+        val swipeBox = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label("밀기 거리 (dp, 화면 높이는 보통 700~900)"))
+            addView(swipeDistInput)
+            addView(label("밀기 시간 (ms, 길수록 천천히·정확히 밀림)"))
+            addView(swipeMsInput)
+        }
+        val actionGroup = RadioGroup(theme)
+        Action.entries.forEachIndexed { i, a ->
+            actionGroup.addView(RadioButton(theme).apply {
+                id = View.generateViewId()
+                text = a.label
+                tag = a
+                isChecked = a == point.action
+            })
+        }
+        fun selectedAction(): Action =
+            actionGroup.findViewById<RadioButton>(actionGroup.checkedRadioButtonId)?.tag as? Action ?: Action.TAP
+        swipeBox.visibility = if (point.action == Action.TAP) View.GONE else View.VISIBLE
+        actionGroup.setOnCheckedChangeListener { _, _ ->
+            swipeBox.visibility = if (selectedAction() == Action.TAP) View.GONE else View.VISIBLE
+        }
         val box = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), 0)
-            addView(label("터치 후 대기 시간 (ms)"))
+            addView(label("동작"))
+            addView(actionGroup)
+            addView(swipeBox)
+            addView(label("동작 후 대기 시간 (ms)"))
             addView(delayInput)
-            addView(label("이 위치 연속 터치 횟수"))
+            addView(label("연속 반복 횟수"))
             addView(tapsInput)
         }
+        val scroll = ScrollView(theme).apply { addView(box) }
         val apply = { delay: Long, taps: Int ->
             point.delayMs = delay
             point.taps = taps
@@ -329,13 +364,23 @@ class ClickService : AccessibilityService() {
         }
         val dialog = AlertDialog.Builder(theme)
             .setTitle("${index + 1}번 포인트")
-            .setView(box)
+            .setView(scroll)
             .setPositiveButton("저장") { _, _ ->
                 val delay = delayInput.text.toString().toLongOrNull()
                 val taps = tapsInput.text.toString().toIntOrNull()
-                if (delay == null || delay < 0 || taps == null || taps < 1) {
-                    Toast.makeText(this, "대기는 0 이상, 횟수는 1 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
+                val dist = swipeDistInput.text.toString().toIntOrNull()
+                val swipeMs = swipeMsInput.text.toString().toLongOrNull()
+                if (delay == null || delay < 0 || taps == null || taps < 1 ||
+                    dist == null || dist < 10 || swipeMs == null || swipeMs < 50
+                ) {
+                    Toast.makeText(
+                        this, "대기 0 이상, 횟수 1 이상, 밀기 거리 10 이상, 밀기 시간 50 이상으로 입력하세요",
+                        Toast.LENGTH_LONG,
+                    ).show()
                 } else {
+                    point.action = selectedAction()
+                    point.swipeDp = dist
+                    point.swipeMs = swipeMs
                     apply(delay, taps)
                 }
             }
@@ -345,9 +390,7 @@ class ClickService : AccessibilityService() {
             .setNegativeButton("취소", null)
             .create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dialog.show()
-        delayInput.requestFocus()
     }
 
     private fun removeMarkers() {
@@ -540,8 +583,27 @@ class ClickService : AccessibilityService() {
         var finished = false
         while (strokes < maxStrokes && (strokes == 0 || t <= BATCH_WINDOW_MS)) {
             val p = targets[index]
+            val point = config.points[index]
             val path = Path().apply { moveTo(p[0], p[1]) }
-            builder.addStroke(GestureDescription.StrokeDescription(path, t, tapMs))
+            val duration = if (point.action == Action.TAP) {
+                tapMs
+            } else {
+                // 밀기: 시작점에서 정한 방향으로 이동 (화면 밖으로 나가지 않게 제한)
+                val d = dp(point.swipeDp).toFloat()
+                val (dx, dy) = when (point.action) {
+                    Action.SWIPE_UP -> 0f to -d
+                    Action.SWIPE_DOWN -> 0f to d
+                    Action.SWIPE_LEFT -> -d to 0f
+                    else -> d to 0f
+                }
+                val dm = resources.displayMetrics
+                path.lineTo(
+                    (p[0] + dx).coerceIn(1f, dm.widthPixels - 1f),
+                    (p[1] + dy).coerceIn(1f, dm.heightPixels - 1f),
+                )
+                point.swipeMs
+            }
+            builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
             highlights.add(t to index)
             strokes++
             // 다음 터치 위치로 진행하고, 이번 터치 뒤의 대기 시간을 구한다
@@ -561,7 +623,7 @@ class ClickService : AccessibilityService() {
                 }
             }
             gapAfterLast = gap
-            t += tapMs + gap
+            t += duration + gap
             if (finished) break
         }
 

@@ -10,15 +10,30 @@ const val DEFAULT_TAP_DURATION_MS = 30L
 /** "새 포인트 기본 대기 시간"의 초기값 (설정 화면에서 바꿀 수 있음) */
 const val DEFAULT_DELAY_MS = 150L
 
+/** 포인트 동작: 터치 또는 한 방향으로 밀기(스크롤) */
+enum class Action(val label: String, val arrow: String) {
+    TAP("터치", ""),
+    SWIPE_UP("위로 밀기 (목록을 아래로 내림)", "↑"),
+    SWIPE_DOWN("아래로 밀기 (목록을 위로 올림)", "↓"),
+    SWIPE_LEFT("왼쪽으로 밀기", "←"),
+    SWIPE_RIGHT("오른쪽으로 밀기", "→"),
+}
+
+const val DEFAULT_SWIPE_DP = 300
+const val DEFAULT_SWIPE_MS = 400L
+
 /**
  * 터치할 위치(화면 좌표, 마커 중심), 이 위치를 연속으로 터치할 횟수,
- * 매 터치 후 대기 시간.
+ * 매 터치 후 대기 시간. 동작이 밀기이면 이 위치에서 시작해 swipeDp만큼 swipeMs 동안 민다.
  */
 data class ClickPoint(
     var x: Int,
     var y: Int,
     var delayMs: Long = DEFAULT_DELAY_MS,
     var taps: Int = 1,
+    var action: Action = Action.TAP,
+    var swipeDp: Int = DEFAULT_SWIPE_DP,
+    var swipeMs: Long = DEFAULT_SWIPE_MS,
 )
 
 data class Config(
@@ -52,6 +67,9 @@ object Store {
                     p.getInt("y"),
                     p.optLong("delayMs", DEFAULT_DELAY_MS),
                     p.optInt("taps", 1).coerceAtLeast(1),
+                    Action.entries.firstOrNull { it.name == p.optString("action") } ?: Action.TAP,
+                    p.optInt("swipeDp", DEFAULT_SWIPE_DP),
+                    p.optLong("swipeMs", DEFAULT_SWIPE_MS),
                 )
             }
             Config(
@@ -72,6 +90,7 @@ object Store {
         cfg.points.forEach {
             arr.put(
                 JSONObject().put("x", it.x).put("y", it.y).put("delayMs", it.delayMs).put("taps", it.taps)
+                    .put("action", it.action.name).put("swipeDp", it.swipeDp).put("swipeMs", it.swipeMs)
             )
         }
         val o = JSONObject()
