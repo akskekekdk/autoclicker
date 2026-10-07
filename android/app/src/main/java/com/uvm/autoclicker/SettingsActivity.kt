@@ -94,7 +94,7 @@ class SettingsActivity : Activity() {
         root.addView(row("새 포인트 기본 대기 (ms)", defaultDelayEdit))
         tapDurationEdit = numberEdit()
         root.addView(row("터치 누르는 시간 (ms)", tapDurationEdit))
-        root.addView(text("터치가 가끔 안 먹히면 이 값을 150~200으로 늘려보세요."))
+        root.addView(text("작을수록 연타가 빨라집니다. 터치가 가끔 안 먹히면 50~100으로 늘려보세요."))
         stopOnTouchCheck = CheckBox(this).apply { text = "실행 중 화면을 터치하면 정지" }
         root.addView(stopOnTouchCheck)
 
@@ -262,8 +262,8 @@ class SettingsActivity : Activity() {
         val loopDelay = loopDelayEdit.text.toString().toLongOrNull()
         val defaultDelay = defaultDelayEdit.text.toString().toLongOrNull()
         val tapDuration = tapDurationEdit.text.toString().toLongOrNull()
-        if (tapDuration == null || tapDuration !in 10..2000) {
-            Toast.makeText(this, "터치 누르는 시간은 10~2000 사이로 입력하세요", Toast.LENGTH_SHORT).show()
+        if (tapDuration == null || tapDuration !in 1..2000) {
+            Toast.makeText(this, "터치 누르는 시간은 1~2000 사이로 입력하세요", Toast.LENGTH_SHORT).show()
             return false
         }
         val delays = delayEdits.map { it.text.toString().toLongOrNull() }

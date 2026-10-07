@@ -40,13 +40,11 @@ class ClickService : AccessibilityService() {
             private set
 
         private const val MARKER_DP = 48
-        /** 터치 감지층을 통과 상태로 바꾼 뒤 실제 터치를 보내기까지 기다리는 시간 (화면 반영 2프레임) */
-        private const val PASS_THROUGH_MS = 60L
-        /** 앱의 터치가 끝난 뒤 감지층을 다시 켜기까지의 시간 */
-        private const val RESTORE_MS = 50L
-        /** 감지층에 가로채인 터치를 다시 누를 때의 대기 시간과 최대 횟수 */
-        private const val RETRY_WAIT_MS = 100L
-        private const val MAX_RETRIES = 2
+        /** 터치 감지층에서 터치 위치마다 비워 두는 구멍 크기 */
+        private const val HOLE_DP = 24
+        /** 한 제스처로 묶어 보내는 터치 수와 묶음 길이 상한 (정지 반응 속도와의 균형) */
+        private const val MAX_BATCH_STROKES = 20
+        private const val BATCH_WINDOW_MS = 300L
     }
 
     private class Marker(val view: TextView, val params: WindowManager.LayoutParams)
@@ -68,13 +66,10 @@ class ClickService : AccessibilityService() {
 
     private var running = false
 
-    // 화면 터치 감지층 (addTouchCatcher 참고)
-    private var touchCatcher: View? = null
-    private var catcherParams: WindowManager.LayoutParams? = null
-    private var gestureInFlight = false
-    private var tapSeq = 0
-    /** 앱이 보낸 터치가 감지층에 가로채였는지 (감지층 전환이 늦은 경우) */
-    private var ownTapSwallowed = false
+    // 화면 터치 감지층 조각들 (addTouchCatchers 참고)
+    private val catchers = mutableListOf<View>()
+    /** 실행 중 각 포인트의 화면 좌표 */
+    private var targets: List<FloatArray> = emptyList()
     private var stoppedByTouchAt = 0L
     private var index = 0
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
@@ -422,6 +417,7 @@ class ClickService : AccessibilityService() {
     }
 
     private fun stopByTouch() {
+        if (!running) return
         stop()
         stoppedByTouchAt = SystemClock.uptimeMillis()
         Toast.makeText(this, "화면 터치로 정지했습니다", Toast.LENGTH_SHORT).show()
@@ -438,58 +434,22 @@ class ClickService : AccessibilityService() {
         cycle = 0
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
-        if (config.stopOnTouch) addTouchCatcher()
+        // 실행 중에는 마커가 움직이지 않으므로 터치 좌표를 한 번만 계산한다 (상태바/노치 오프셋 보정)
+        targets = markers.map { m ->
+            val loc = IntArray(2)
+            m.view.getLocationOnScreen(loc)
+            floatArrayOf((loc[0] + m.view.width / 2).toFloat(), (loc[1] + m.view.height / 2).toFloat())
+        }
+        if (config.stopOnTouch) addTouchCatchers()
         updateInfo()
-        tapCurrent()
-    }
-
-    /**
-     * 실행 중 화면 전체를 덮는 투명한 층. 사용자가 화면을 누르면 이 층이 받아서 정지한다
-     * (누른 터치는 아래 앱으로 전달되지 않음). 앱이 터치를 보낼 때만 잠깐 통과 상태로 바뀐다.
-     */
-    @SuppressLint("ClickableViewAccessibility")
-    private fun addTouchCatcher() {
-        val view = View(this)
-        val params = overlayParams(0, 0).apply {
-            width = WindowManager.LayoutParams.MATCH_PARENT
-            height = WindowManager.LayoutParams.MATCH_PARENT
-        }
-        view.setOnTouchListener { _, e ->
-            // 앱 자신의 터치가 통과 전환보다 먼저 도착한 경우는 무시
-            if (e.actionMasked == MotionEvent.ACTION_DOWN && running) {
-                if (gestureInFlight) ownTapSwallowed = true else stopByTouch()
-            }
-            true
-        }
-        wm.addView(view, params)
-        touchCatcher = view
-        catcherParams = params
-    }
-
-    private fun removeTouchCatcher() {
-        touchCatcher?.let { wm.removeView(it) }
-        touchCatcher = null
-        catcherParams = null
-    }
-
-    private fun setCatcherTouchable(touchable: Boolean) {
-        val view = touchCatcher ?: return
-        val params = catcherParams ?: return
-        params.flags = if (touchable) {
-            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        } else {
-            params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
-        wm.updateViewLayout(view, params)
+        dispatchBatch()
     }
 
     fun stop() {
         if (!running) return
         running = false
         handler.removeCallbacksAndMessages(null)
-        removeTouchCatcher()
-        gestureInFlight = false
-        ownTapSwallowed = false
+        removeTouchCatchers()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEach { it.view.background = markerBackground(false) }
         setMarkersTouchable(true)
@@ -497,104 +457,133 @@ class ClickService : AccessibilityService() {
         updateInfo()
     }
 
-    private fun tapCurrent() {
-        if (!running) return
-        val marker = markers[index]
-        // 실제 화면상의 마커 중심을 터치한다 (상태바/노치 오프셋 보정)
-        val loc = IntArray(2)
-        marker.view.getLocationOnScreen(loc)
-        val cx = (loc[0] + marker.view.width / 2).toFloat()
-        val cy = (loc[1] + marker.view.height / 2).toFloat()
-
-        markers.forEachIndexed { i, m -> m.view.background = markerBackground(i == index) }
-
-        val path = Path().apply { moveTo(cx, cy) }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, config.tapDurationMs))
-            .build()
-        val catching = touchCatcher != null
-        // 터치 감지층을 통과시키느라 기다린 시간만큼 다음 대기에서 빼서 설정한 간격을 유지한다
-        val delay = if (catching) {
-            (config.points[index].delayMs - PASS_THROUGH_MS).coerceAtLeast(0)
-        } else {
-            config.points[index].delayMs
+    /**
+     * 실행 중 화면을 덮는 투명한 감지층. 터치할 위치마다 작은 구멍을 남겨 두어
+     * 앱의 터치는 그대로 통과하고, 그 밖의 곳을 사용자가 누르면 정지한다.
+     * 감지층은 여러 개의 사각형 창으로 "화면 전체 - 구멍들" 영역을 덮는다.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun addTouchCatchers() {
+        removeTouchCatchers()
+        val half = dp(HOLE_DP) / 2
+        // 마커 창과 같은 좌표계(오버레이 배치 좌표)로 구멍을 만든다
+        val holes = markers.map { m ->
+            val cx = m.params.x + markerPx / 2
+            val cy = m.params.y + markerPx / 2
+            intArrayOf(cx - half, cy - half, cx + half, cy + half)
         }
-        val seq = ++tapSeq
-        var retries = 0
-        lateinit var dispatch: () -> Unit
+        val dm = resources.displayMetrics
+        val big = maxOf(dm.widthPixels, dm.heightPixels) * 3
+        for (r in coverRects(holes, -big, -big, big, big)) {
+            val view = View(this)
+            view.setOnTouchListener { _, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) stopByTouch()
+                true
+            }
+            val params = overlayParams(r[0], r[1]).apply {
+                width = r[2] - r[0]
+                height = r[3] - r[1]
+            }
+            wm.addView(view, params)
+            catchers.add(view)
+        }
+    }
+
+    private fun removeTouchCatchers() {
+        catchers.forEach { wm.removeView(it) }
+        catchers.clear()
+    }
+
+    /** 사각형 영역 [l,t,r,b]에서 구멍들을 뺀 나머지를 덮는 사각형 목록 (가로 띠로 나눠 계산). */
+    private fun coverRects(holes: List<IntArray>, l: Int, t: Int, r: Int, b: Int): List<IntArray> {
+        val ys = (holes.flatMap { listOf(it[1], it[3]) } + listOf(t, b))
+            .map { it.coerceIn(t, b) }.distinct().sorted()
+        val out = mutableListOf<IntArray>()
+        for (k in 0 until ys.size - 1) {
+            val y0 = ys[k]
+            val y1 = ys[k + 1]
+            if (y1 <= y0) continue
+            val inBand = holes.filter { it[1] < y1 && it[3] > y0 }.sortedBy { it[0] }
+            var x = l
+            for (h in inBand) {
+                if (h[0] > x) out.add(intArrayOf(x, y0, h[0], y1))
+                x = maxOf(x, h[2])
+            }
+            if (x < r) out.add(intArrayOf(x, y0, r, y1))
+        }
+        return out
+    }
+
+    /**
+     * 다음 터치 여러 개를 하나의 제스처로 묶어 보낸다. 터치마다 따로 보내면 생기는
+     * 지연이 사라져 연타가 빨라진다. 정지가 늦어지지 않도록 묶음 길이는 BATCH_WINDOW_MS로 제한한다.
+     */
+    private fun dispatchBatch() {
+        if (!running) return
+        val maxStrokes = minOf(MAX_BATCH_STROKES, GestureDescription.getMaxStrokeCount())
+        val tapMs = config.tapDurationMs
+        val builder = GestureDescription.Builder()
+        val highlights = mutableListOf<Pair<Long, Int>>()
+        var t = 0L
+        var strokes = 0
+        var gapAfterLast = 0L
+        var finished = false
+        while (strokes < maxStrokes && (strokes == 0 || t <= BATCH_WINDOW_MS)) {
+            val p = targets[index]
+            val path = Path().apply { moveTo(p[0], p[1]) }
+            builder.addStroke(GestureDescription.StrokeDescription(path, t, tapMs))
+            highlights.add(t to index)
+            strokes++
+            // 다음 터치 위치로 진행하고, 이번 터치 뒤의 대기 시간을 구한다
+            var gap = config.points[index].delayMs
+            tapRepeat++
+            if (tapRepeat >= config.points[index].taps) {
+                tapRepeat = 0
+                index++
+                if (index >= targets.size) {
+                    index = 0
+                    cycle++
+                    if (config.repeat in 1..cycle) {
+                        finished = true
+                    } else {
+                        gap += config.loopDelayMs
+                    }
+                }
+            }
+            gapAfterLast = gap
+            t += tapMs + gap
+            if (finished) break
+        }
+
+        highlights.forEach { (at, i) ->
+            handler.postDelayed({
+                if (running) markers.forEachIndexed { k, m -> m.view.background = markerBackground(k == i) }
+            }, at)
+        }
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
-                // 감지층이 늦게 비켜서 앱의 터치를 가로챘다면 같은 위치를 다시 누른다
-                if (ownTapSwallowed && running && retries < MAX_RETRIES) {
-                    ownTapSwallowed = false
-                    retries++
-                    setCatcherTouchable(false)
-                    handler.postDelayed({ if (running && seq == tapSeq) dispatch() }, RETRY_WAIT_MS)
-                    return
+                if (!running) return
+                updateInfo()
+                if (finished) {
+                    stop()
+                    Toast.makeText(this@ClickService, "반복 완료", Toast.LENGTH_SHORT).show()
+                } else {
+                    handler.postDelayed({ dispatchBatch() }, gapAfterLast)
                 }
-                ownTapSwallowed = false
-                gestureEnded(seq)
-                scheduleNext(delay)
             }
 
             override fun onCancelled(g: GestureDescription?) {
-                ownTapSwallowed = false
-                gestureEnded(seq)
-                // 앱이 터치하는 순간 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
-                if (config.stopOnTouch && running) {
+                if (!running) return
+                // 앱이 터치하는 중에 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
+                if (config.stopOnTouch) {
                     stopByTouch()
                 } else {
-                    scheduleNext(delay)
+                    handler.postDelayed({ dispatchBatch() }, gapAfterLast)
                 }
             }
         }
-        dispatch = {
-            gestureInFlight = true
-            if (!dispatchGesture(gesture, callback, handler)) {
-                gestureEnded(seq)
-                scheduleNext(delay)
-            }
+        if (!dispatchGesture(builder.build(), callback, handler)) {
+            handler.postDelayed({ dispatchBatch() }, gapAfterLast.coerceAtLeast(16))
         }
-        if (catching) {
-            setCatcherTouchable(false)
-            handler.postDelayed({ if (running && seq == tapSeq) dispatch() }, PASS_THROUGH_MS)
-        } else {
-            dispatch()
-        }
-    }
-
-    private fun gestureEnded(seq: Int) {
-        gestureInFlight = false
-        // 다음 터치가 이미 시작되지 않았다면 잠시 뒤 감지층을 다시 켠다
-        handler.postDelayed({ if (running && seq == tapSeq) setCatcherTouchable(true) }, RESTORE_MS)
-    }
-
-    private fun scheduleNext(delayMs: Long) {
-        if (!running) return
-        handler.postDelayed({ next() }, delayMs)
-    }
-
-    private fun next() {
-        if (!running) return
-        tapRepeat++
-        if (tapRepeat < config.points[index].taps) {
-            tapCurrent() // 같은 위치를 지정한 횟수만큼 반복
-            return
-        }
-        tapRepeat = 0
-        index++
-        if (index < markers.size) {
-            tapCurrent()
-            return
-        }
-        index = 0
-        cycle++
-        if (config.repeat in 1..cycle) {
-            stop()
-            Toast.makeText(this, "반복 완료", Toast.LENGTH_SHORT).show()
-            return
-        }
-        updateInfo()
-        handler.postDelayed({ tapCurrent() }, config.loopDelayMs)
     }
 }
