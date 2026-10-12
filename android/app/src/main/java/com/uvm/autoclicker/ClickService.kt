@@ -440,7 +440,16 @@ class ClickService : AccessibilityService() {
         if (running) return
         val dm = resources.displayMetrics
         val offset = dp(24) * (config.points.size % 6)
-        config.points.add(ClickPoint(dm.widthPixels / 2 + offset, dm.heightPixels / 2 + offset, config.defaultDelayMs))
+        // 직전 포인트의 대기 시간과 반복 횟수를 이어받는다 (첫 포인트는 기본값). 동작은 항상 터치.
+        val last = config.points.lastOrNull()
+        config.points.add(
+            ClickPoint(
+                dm.widthPixels / 2 + offset,
+                dm.heightPixels / 2 + offset,
+                last?.delayMs ?: config.defaultDelayMs,
+                last?.taps ?: 1,
+            )
+        )
         Store.save(this, config)
         rebuildMarkers()
     }
