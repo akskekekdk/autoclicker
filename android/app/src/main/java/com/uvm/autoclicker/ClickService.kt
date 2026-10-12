@@ -68,6 +68,8 @@ class ClickService : AccessibilityService() {
     private var panel: View? = null
     private lateinit var expandedView: LinearLayout
     private lateinit var foldBtn: TextView
+    private lateinit var orientBtn: TextView
+    private lateinit var handleView: TextView
     private var foldable: List<View> = emptyList()
     private var minimized = false
     private lateinit var panelParams: WindowManager.LayoutParams
@@ -220,15 +222,15 @@ class ClickService : AccessibilityService() {
             textSize = 18f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
-            layoutParams = LinearLayout.LayoutParams(dp(52), dp(28))
         }
+        handleView = handle
         playBtn = panelButton("▶", "시작") { toggle() }
         infoText = TextView(this).apply {
             textSize = 10f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
-            layoutParams = LinearLayout.LayoutParams(dp(52), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
+        orientBtn = panelButton("⇄", "가로") { togglePanelOrientation() }
 
         foldBtn = panelButton("▲", "접기") { setMinimized(!minimized) }
         // 접었을 때 숨길 버튼들 (핸들과 접기/펼치기 버튼은 항상 보임)
@@ -237,6 +239,7 @@ class ClickService : AccessibilityService() {
             panelButton("＋", "추가") { addPoint() },
             panelButton("－", "삭제") { removeLastPoint() },
             panelButton("⚙", "설정") { openSettings() },
+            orientBtn,
             panelButton("✕", "닫기") { hidePanel() },
             infoText,
         )
@@ -248,10 +251,50 @@ class ClickService : AccessibilityService() {
 
         panelParams = overlayParams(0, resources.displayMetrics.heightPixels / 4)
         makeDraggable(handle, expandedView, panelParams)
+        applyPanelOrientation()
         wm.addView(expandedView, panelParams)
         panel = expandedView
         setMinimized(false)
         updateInfo()
+    }
+
+    private fun togglePanelOrientation() {
+        config.panelHorizontal = !config.panelHorizontal
+        Store.save(this, config)
+        applyPanelOrientation()
+        // 방향을 바꾼 뒤 패널이 화면 밖으로 나가지 않도록 위치를 보정
+        expandedView.post {
+            val dm = resources.displayMetrics
+            panelParams.x = panelParams.x.coerceIn(0, (dm.widthPixels - expandedView.width).coerceAtLeast(0))
+            panelParams.y = panelParams.y.coerceIn(0, (dm.heightPixels - expandedView.height).coerceAtLeast(0))
+            if (panel != null) wm.updateViewLayout(expandedView, panelParams)
+        }
+    }
+
+    /** 패널을 세로(기본) 또는 가로로 배치한다. 가로일 때는 휴대폰 폭에 맞도록 버튼을 조금 좁힌다. */
+    private fun applyPanelOrientation() {
+        val horizontal = config.panelHorizontal
+        val btnW = dp(if (horizontal) 46 else 52)
+        val btnH = dp(50)
+        expandedView.orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        expandedView.gravity = if (horizontal) Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL
+        if (horizontal) {
+            expandedView.setPadding(dp(4), dp(2), dp(4), dp(2))
+        } else {
+            expandedView.setPadding(dp(2), dp(4), dp(2), dp(4))
+        }
+        for (i in 0 until expandedView.childCount) {
+            val child = expandedView.getChildAt(i)
+            child.layoutParams = when (child) {
+                handleView -> if (horizontal) LinearLayout.LayoutParams(dp(24), btnH)
+                else LinearLayout.LayoutParams(btnW, dp(28))
+                infoText -> if (horizontal) LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, btnH)
+                else LinearLayout.LayoutParams(btnW, LinearLayout.LayoutParams.WRAP_CONTENT)
+                else -> LinearLayout.LayoutParams(btnW, btnH)
+            }
+        }
+        infoText.minWidth = if (horizontal) dp(36) else 0
+        orientBtn.text = if (horizontal) buttonText("⇅", "세로") else buttonText("⇄", "가로")
     }
 
     /** 패널을 접거나 펼친다. 같은 버튼을 다시 누르면 반대로 동작. 실행 중이 아니면 마커도 함께 숨긴다. */

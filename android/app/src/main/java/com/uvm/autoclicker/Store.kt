@@ -50,6 +50,8 @@ data class Config(
     var tapDurationMs: Long = DEFAULT_TAP_DURATION_MS,
     /** 최대 실행 시간(분). 0 = 제한 없음. 반복 횟수와 둘 중 먼저 도달하면 정지 */
     var maxRunMinutes: Int = 0,
+    /** 플로팅 패널을 가로로 배치 */
+    var panelHorizontal: Boolean = false,
 )
 
 object Store {
@@ -82,6 +84,7 @@ object Store {
                 o.optBoolean("stopOnTouch", true),
                 o.optLong("tapDurationMs", DEFAULT_TAP_DURATION_MS).coerceIn(1, 2000),
                 o.optInt("maxRunMinutes", 0).coerceAtLeast(0),
+                o.optBoolean("panelHorizontal", false),
             )
         } catch (e: Exception) {
             Config()
@@ -104,6 +107,7 @@ object Store {
             .put("stopOnTouch", cfg.stopOnTouch)
             .put("tapDurationMs", cfg.tapDurationMs)
             .put("maxRunMinutes", cfg.maxRunMinutes)
+            .put("panelHorizontal", cfg.panelHorizontal)
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
     }
 }
