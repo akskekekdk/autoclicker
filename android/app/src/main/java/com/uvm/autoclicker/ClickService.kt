@@ -53,6 +53,8 @@ class ClickService : AccessibilityService() {
          * 마커에 닿아 설정 창이 열리는 것을 막는다 (묶음 길이 + 여유).
          */
         private const val STOP_GRACE_MS = 800L
+        /** 실행 시간 제한 확인/남은 시간 표시 갱신 주기 */
+        private const val TIME_CHECK_MS = 30_000L
     }
 
     private class Marker(val view: TextView, val params: WindowManager.LayoutParams)
@@ -80,6 +82,8 @@ class ClickService : AccessibilityService() {
     private var targets: List<FloatArray> = emptyList()
     private var stoppedByTouchAt = 0L
     private var stoppedAt = 0L
+    /** 실행 시간 제한이 있을 때 정지할 시각 (uptime 기준), 없으면 0 */
+    private var runEndAt = 0L
     private var index = 0
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
     private var tapRepeat = 0
@@ -429,7 +433,13 @@ class ClickService : AccessibilityService() {
         if (!::infoText.isInitialized) return
         infoText.text = if (running) {
             val total = if (config.repeat == 0) "∞" else config.repeat.toString()
-            "${cycle + 1}/$total"
+            val left = if (runEndAt > 0) {
+                val min = ((runEndAt - SystemClock.uptimeMillis()).coerceAtLeast(0) + 59_999) / 60_000
+                "\n남은 ${min / 60}:${"%02d".format(min % 60)}"
+            } else {
+                ""
+            }
+            "${cycle + 1}/$total$left"
         } else {
             "${config.points.size}개"
         }
@@ -501,8 +511,39 @@ class ClickService : AccessibilityService() {
             floatArrayOf((loc[0] + m.view.width / 2).toFloat(), (loc[1] + m.view.height / 2).toFloat())
         }
         if (config.stopOnTouch) addTouchCatchers()
+        setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행 중에는 켜 둔다
+        runEndAt = if (config.maxRunMinutes > 0) {
+            SystemClock.uptimeMillis() + config.maxRunMinutes * 60_000L
+        } else {
+            0L
+        }
         updateInfo()
+        if (runEndAt > 0) scheduleTimeCheck()
         dispatchBatch()
+    }
+
+    /** 실행 시간 제한: 남은 시간 표시를 갱신하고, 시간이 다 되면 정지한다. */
+    private fun scheduleTimeCheck() {
+        handler.postDelayed({
+            if (!running) return@postDelayed
+            if (SystemClock.uptimeMillis() >= runEndAt) {
+                stop()
+                Toast.makeText(this, "설정한 실행 시간이 지나 정지했습니다", Toast.LENGTH_LONG).show()
+            } else {
+                updateInfo()
+                scheduleTimeCheck()
+            }
+        }, minOf(TIME_CHECK_MS, (runEndAt - SystemClock.uptimeMillis()).coerceAtLeast(1)))
+    }
+
+    private fun setKeepScreenOn(on: Boolean) {
+        val view = panel ?: return
+        panelParams.flags = if (on) {
+            panelParams.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        } else {
+            panelParams.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
+        }
+        wm.updateViewLayout(view, panelParams)
     }
 
     fun stop() {
@@ -510,6 +551,8 @@ class ClickService : AccessibilityService() {
         running = false
         handler.removeCallbacksAndMessages(null)
         removeTouchCatchers()
+        setKeepScreenOn(false)
+        runEndAt = 0L
         stoppedAt = SystemClock.uptimeMillis()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEach { it.view.background = markerBackground(false) }

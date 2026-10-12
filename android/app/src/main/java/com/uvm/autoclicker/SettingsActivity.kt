@@ -26,6 +26,8 @@ class SettingsActivity : Activity() {
     private lateinit var panelBtn: Button
     private lateinit var repeatEdit: EditText
     private lateinit var loopDelayEdit: EditText
+    private lateinit var limitHoursEdit: EditText
+    private lateinit var limitMinutesEdit: EditText
     private lateinit var pointsBox: LinearLayout
 
     private lateinit var updateText: TextView
@@ -90,6 +92,21 @@ class SettingsActivity : Activity() {
         loopDelayEdit = numberEdit()
         root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
         root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
+        limitHoursEdit = numberEdit()
+        limitMinutesEdit = numberEdit()
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@SettingsActivity).apply {
+                text = "실행 시간 제한 (0 = 없음)"
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(limitHoursEdit, LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(TextView(this@SettingsActivity).apply { text = "시간 " })
+            addView(limitMinutesEdit, LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(TextView(this@SettingsActivity).apply { text = "분" })
+        })
+        root.addView(text("반복 횟수와 실행 시간 중 먼저 도달하는 쪽에서 정지합니다. 실행 중에는 화면이 꺼지지 않습니다."))
         defaultDelayEdit = numberEdit()
         root.addView(row("첫 포인트 기본 대기 (ms)", defaultDelayEdit))
         root.addView(text("＋로 추가하는 포인트는 마지막 포인트의 대기 시간과 반복 횟수를 이어받습니다."))
@@ -179,6 +196,8 @@ class SettingsActivity : Activity() {
         config = Store.load(this)
         repeatEdit.setText(config.repeat.toString())
         loopDelayEdit.setText(config.loopDelayMs.toString())
+        limitHoursEdit.setText((config.maxRunMinutes / 60).toString())
+        limitMinutesEdit.setText((config.maxRunMinutes % 60).toString())
         defaultDelayEdit.setText(config.defaultDelayMs.toString())
         stopOnTouchCheck.isChecked = config.stopOnTouch
         tapDurationEdit.setText(config.tapDurationMs.toString())
@@ -261,6 +280,12 @@ class SettingsActivity : Activity() {
     private fun save(): Boolean {
         val repeat = repeatEdit.text.toString().toIntOrNull()
         val loopDelay = loopDelayEdit.text.toString().toLongOrNull()
+        val limitHours = limitHoursEdit.text.toString().ifBlank { "0" }.toIntOrNull()
+        val limitMinutes = limitMinutesEdit.text.toString().ifBlank { "0" }.toIntOrNull()
+        if (limitHours == null || limitHours < 0 || limitMinutes == null || limitMinutes < 0) {
+            Toast.makeText(this, "실행 시간 제한은 0 이상의 숫자로 입력하세요", Toast.LENGTH_SHORT).show()
+            return false
+        }
         val defaultDelay = defaultDelayEdit.text.toString().toLongOrNull()
         val tapDuration = tapDurationEdit.text.toString().toLongOrNull()
         if (tapDuration == null || tapDuration !in 1..2000) {
@@ -286,6 +311,7 @@ class SettingsActivity : Activity() {
         }
         latest.repeat = repeat
         latest.loopDelayMs = loopDelay
+        latest.maxRunMinutes = limitHours * 60 + limitMinutes
         latest.defaultDelayMs = defaultDelay
         latest.stopOnTouch = stopOnTouchCheck.isChecked
         latest.tapDurationMs = tapDuration

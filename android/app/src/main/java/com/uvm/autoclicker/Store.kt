@@ -48,6 +48,8 @@ data class Config(
     var stopOnTouch: Boolean = true,
     /** 한 번 터치할 때 누르고 있는 시간 */
     var tapDurationMs: Long = DEFAULT_TAP_DURATION_MS,
+    /** 최대 실행 시간(분). 0 = 제한 없음. 반복 횟수와 둘 중 먼저 도달하면 정지 */
+    var maxRunMinutes: Int = 0,
 )
 
 object Store {
@@ -79,6 +81,7 @@ object Store {
                 o.optLong("defaultDelayMs", DEFAULT_DELAY_MS),
                 o.optBoolean("stopOnTouch", true),
                 o.optLong("tapDurationMs", DEFAULT_TAP_DURATION_MS).coerceIn(1, 2000),
+                o.optInt("maxRunMinutes", 0).coerceAtLeast(0),
             )
         } catch (e: Exception) {
             Config()
@@ -100,6 +103,7 @@ object Store {
             .put("defaultDelayMs", cfg.defaultDelayMs)
             .put("stopOnTouch", cfg.stopOnTouch)
             .put("tapDurationMs", cfg.tapDurationMs)
+            .put("maxRunMinutes", cfg.maxRunMinutes)
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
     }
 }
