@@ -31,6 +31,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
+import kotlin.random.Random
 
 /**
  * 접근성 서비스: 플로팅 컨트롤 패널과 번호가 붙은 위치 마커를 화면 위에 띄우고,
@@ -319,7 +320,8 @@ class ClickService : AccessibilityService() {
     /** 마커 글자: 큰 번호 + 작은 대기시간(ms), 여러 번 터치하면 "×횟수". */
     private fun markerText(number: Int, point: ClickPoint): SpannableString {
         val base = if (point.action == Action.TAP) "${point.delayMs}" else "${point.action.arrow}${point.delayMs}"
-        val detail = if (point.taps > 1) "$base×${point.taps}" else base
+        val withTaps = if (point.taps > 1) "$base×${point.taps}" else base
+        val detail = if (point.chance < 100) "$withTaps\n${point.chance}%" else withTaps
         return SpannableString("$number\n$detail").apply {
             setSpan(RelativeSizeSpan(0.55f), number.toString().length + 1, length, 0)
         }
@@ -369,6 +371,7 @@ class ClickService : AccessibilityService() {
         val tapsInput = numberInput(point.taps)
         val swipeDistInput = numberInput(point.swipeDp)
         val swipeMsInput = numberInput(point.swipeMs)
+        val chanceInput = numberInput(point.chance)
         val swipeBox = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             addView(label("밀기 거리 (dp, 화면 높이는 보통 700~900)"))
@@ -401,6 +404,8 @@ class ClickService : AccessibilityService() {
             addView(delayInput)
             addView(label("연속 반복 횟수"))
             addView(tapsInput)
+            addView(label("실행 확률 (%, 100 = 항상)"))
+            addView(chanceInput)
         }
         val scroll = ScrollView(theme).apply { addView(box) }
         val apply = { delay: Long, taps: Int ->
@@ -417,17 +422,20 @@ class ClickService : AccessibilityService() {
                 val taps = tapsInput.text.toString().toIntOrNull()
                 val dist = swipeDistInput.text.toString().toIntOrNull()
                 val swipeMs = swipeMsInput.text.toString().toLongOrNull()
+                val chance = chanceInput.text.toString().toIntOrNull()
                 if (delay == null || delay < 0 || taps == null || taps < 1 ||
-                    dist == null || dist < 10 || swipeMs == null || swipeMs < 50
+                    dist == null || dist < 10 || swipeMs == null || swipeMs < 50 ||
+                    chance == null || chance !in 0..100
                 ) {
                     Toast.makeText(
-                        this, "대기 0 이상, 횟수 1 이상, 밀기 거리 10 이상, 밀기 시간 50 이상으로 입력하세요",
+                        this, "대기 0 이상, 횟수 1 이상, 밀기 거리 10 이상, 밀기 시간 50 이상, 확률 0~100으로 입력하세요",
                         Toast.LENGTH_LONG,
                     ).show()
                 } else {
                     point.action = selectedAction()
                     point.swipeDp = dist
                     point.swipeMs = swipeMs
+                    point.chance = chance
                     apply(delay, taps)
                 }
             }
@@ -501,6 +509,7 @@ class ClickService : AccessibilityService() {
                 dm.heightPixels / 2 + offset,
                 last?.delayMs ?: config.defaultDelayMs,
                 last?.taps ?: 1,
+                chance = last?.chance ?: 100,
             )
         )
         Store.save(this, config)
@@ -673,10 +682,11 @@ class ClickService : AccessibilityService() {
         val builder = GestureDescription.Builder()
         val highlights = mutableListOf<Pair<Long, Int>>()
         var t = 0L
+        var steps = 0
         var strokes = 0
-        var gapAfterLast = 0L
+        var lastStrokeEnd = 0L
         var finished = false
-        while (strokes < maxStrokes && (strokes == 0 || t <= BATCH_WINDOW_MS)) {
+        while (strokes < maxStrokes && (steps == 0 || t <= BATCH_WINDOW_MS)) {
             val p = targets[index]
             val point = config.points[index]
             val path = Path().apply { moveTo(p[0], p[1]) }
@@ -698,13 +708,18 @@ class ClickService : AccessibilityService() {
                 )
                 point.swipeMs
             }
-            builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
-            highlights.add(t to index)
-            strokes++
+            // 확률에 따라 이번 동작을 실제로 할지 정한다. 건너뛰어도 시간은 그대로 흐른다.
+            if (point.chance >= 100 || Random.nextInt(100) < point.chance) {
+                builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
+                highlights.add(t to index)
+                strokes++
+                lastStrokeEnd = t + duration
+            }
+            steps++
             // 다음 터치 위치로 진행하고, 이번 터치 뒤의 대기 시간을 구한다
-            var gap = config.points[index].delayMs
+            var gap = point.delayMs
             tapRepeat++
-            if (tapRepeat >= config.points[index].taps) {
+            if (tapRepeat >= point.taps) {
                 tapRepeat = 0
                 index++
                 if (index >= targets.size) {
@@ -717,26 +732,37 @@ class ClickService : AccessibilityService() {
                     }
                 }
             }
-            gapAfterLast = gap
             t += duration + gap
             if (finished) break
         }
+        // 마지막으로 실제 실행한 동작이 끝난 뒤부터 이번 묶음이 끝날 때까지 남은 시간
+        val waitAfter = t - lastStrokeEnd
 
         highlights.forEach { (at, i) ->
             handler.postDelayed({
                 if (running) markers.forEachIndexed { k, m -> m.view.background = markerBackground(k == i) }
             }, at)
         }
-        val callback = object : GestureResultCallback() {
-            override fun onCompleted(g: GestureDescription?) {
-                if (!running) return
+        val afterBatch = {
+            if (running) {
                 updateInfo()
                 if (finished) {
                     stop()
                     Toast.makeText(this@ClickService, "반복 완료", Toast.LENGTH_SHORT).show()
                 } else {
-                    handler.postDelayed({ dispatchBatch() }, gapAfterLast)
+                    dispatchBatch()
                 }
+            }
+        }
+        if (strokes == 0) {
+            // 이번 묶음은 확률로 모두 건너뜀: 시간만 흘려보낸다
+            handler.postDelayed({ afterBatch() }, t)
+            return
+        }
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(g: GestureDescription?) {
+                if (!running) return
+                handler.postDelayed({ afterBatch() }, waitAfter)
             }
 
             override fun onCancelled(g: GestureDescription?) {
@@ -745,12 +771,12 @@ class ClickService : AccessibilityService() {
                 if (config.stopOnTouch) {
                     stopByTouch()
                 } else {
-                    handler.postDelayed({ dispatchBatch() }, gapAfterLast)
+                    handler.postDelayed({ afterBatch() }, waitAfter)
                 }
             }
         }
         if (!dispatchGesture(builder.build(), callback, handler)) {
-            handler.postDelayed({ dispatchBatch() }, gapAfterLast.coerceAtLeast(16))
+            handler.postDelayed({ afterBatch() }, t.coerceAtLeast(16))
         }
     }
 }

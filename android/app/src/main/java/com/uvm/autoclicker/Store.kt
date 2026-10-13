@@ -34,6 +34,8 @@ data class ClickPoint(
     var action: Action = Action.TAP,
     var swipeDp: Int = DEFAULT_SWIPE_DP,
     var swipeMs: Long = DEFAULT_SWIPE_MS,
+    /** 동작이 실제로 실행될 확률(%). 실행하지 않아도 시간은 그대로 흐른다 */
+    var chance: Int = 100,
 )
 
 data class Config(
@@ -74,6 +76,7 @@ object Store {
                     Action.entries.firstOrNull { it.name == p.optString("action") } ?: Action.TAP,
                     p.optInt("swipeDp", DEFAULT_SWIPE_DP),
                     p.optLong("swipeMs", DEFAULT_SWIPE_MS),
+                    p.optInt("chance", 100).coerceIn(0, 100),
                 )
             }
             Config(
@@ -97,6 +100,7 @@ object Store {
             arr.put(
                 JSONObject().put("x", it.x).put("y", it.y).put("delayMs", it.delayMs).put("taps", it.taps)
                     .put("action", it.action.name).put("swipeDp", it.swipeDp).put("swipeMs", it.swipeMs)
+                    .put("chance", it.chance)
             )
         }
         val o = JSONObject()
