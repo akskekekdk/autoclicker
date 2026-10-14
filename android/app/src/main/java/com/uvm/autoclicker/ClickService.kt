@@ -239,6 +239,7 @@ class ClickService : AccessibilityService() {
             playBtn,
             panelButton("＋", "추가") { addPoint() },
             panelButton("－", "삭제") { removeLastPoint() },
+            panelButton("💾", "매크로") { showMacroDialog() },
             panelButton("⚙", "설정") { openSettings() },
             orientBtn,
             panelButton("✕", "닫기") { hidePanel() },
@@ -275,7 +276,7 @@ class ClickService : AccessibilityService() {
     /** 패널을 세로(기본) 또는 가로로 배치한다. 가로일 때는 휴대폰 폭에 맞도록 버튼을 조금 좁힌다. */
     private fun applyPanelOrientation() {
         val horizontal = config.panelHorizontal
-        val btnW = dp(if (horizontal) 46 else 52)
+        val btnW = dp(if (horizontal) 42 else 52)
         val btnH = dp(50)
         expandedView.orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         expandedView.gravity = if (horizontal) Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL
@@ -492,7 +493,8 @@ class ClickService : AccessibilityService() {
             }
             "${cycle + 1}/$total$left"
         } else {
-            "${config.points.size}개"
+            val name = config.currentMacro.let { if (it.length > 6) it.take(5) + "…" else it }
+            if (name.isEmpty()) "${config.points.size}개" else "${config.points.size}개\n$name"
         }
     }
 
@@ -521,6 +523,105 @@ class ClickService : AccessibilityService() {
         config.points.removeAt(config.points.lastIndex)
         Store.save(this, config)
         rebuildMarkers()
+    }
+
+    // --------------------------------------------------------------- macros
+    private fun overlayDialog(builder: AlertDialog.Builder): AlertDialog =
+        builder.create().apply { window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) }
+
+    private val dialogTheme get() = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+
+    /** 저장된 매크로 목록: 누르면 불러오기, 길게 누르면 삭제, 아래 버튼으로 현재 상태 저장. */
+    private fun showMacroDialog() {
+        if (running) return
+        val names = Store.macroNames(this)
+        val labels = names.map { if (it == config.currentMacro) "✓ $it" else it }.toTypedArray()
+        val builder = AlertDialog.Builder(dialogTheme)
+            .setTitle(if (names.isEmpty()) "저장된 매크로 없음" else "매크로 불러오기 (길게 누르면 삭제)")
+            .setPositiveButton("현재 상태 저장") { _, _ -> showSaveMacroDialog() }
+            .setNegativeButton("닫기", null)
+        if (names.isEmpty()) {
+            builder.setMessage("'현재 상태 저장'을 눌러 지금 포인트와 설정을 이름 붙여 저장하세요.")
+        } else {
+            builder.setItems(labels) { _, which -> loadMacro(names[which]) }
+        }
+        val dialog = overlayDialog(builder)
+        dialog.show()
+        dialog.listView?.setOnItemLongClickListener { _, _, position, _ ->
+            dialog.dismiss()
+            confirmDeleteMacro(names[position])
+            true
+        }
+    }
+
+    private fun showSaveMacroDialog() {
+        val input = EditText(dialogTheme).apply {
+            setSingleLine()
+            setText(config.currentMacro.ifEmpty { "매크로 ${Store.macroNames(this@ClickService).size + 1}" })
+            setSelectAllOnFocus(true)
+        }
+        val box = FrameLayout(this).apply {
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(input)
+        }
+        val dialog = overlayDialog(
+            AlertDialog.Builder(dialogTheme)
+                .setTitle("매크로 이름")
+                .setView(box)
+                .setPositiveButton("저장") { _, _ ->
+                    val name = input.text.toString().trim()
+                    if (name.isEmpty()) {
+                        Toast.makeText(this, "이름을 입력하세요", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val existed = name in Store.macroNames(this)
+                        config.currentMacro = name
+                        Store.save(this, config)
+                        Store.saveMacro(this, name, config)
+                        updateInfo()
+                        Toast.makeText(
+                            this, if (existed) "'$name' 덮어써서 저장했습니다" else "'$name' 저장했습니다",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                .setNegativeButton("취소", null)
+        )
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dialog.show()
+        input.requestFocus()
+    }
+
+    private fun loadMacro(name: String) {
+        if (running) return
+        // 지금 매크로에서 바꾼 내용을 잃지 않도록 먼저 그 매크로에 자동 저장
+        val current = config.currentMacro
+        if (current.isNotEmpty() && current != name && current in Store.macroNames(this)) {
+            Store.saveMacro(this, current, config)
+        }
+        if (!Store.applyMacro(this, name, config)) {
+            Toast.makeText(this, "'$name'을(를) 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Store.save(this, config)
+        rebuildMarkers()
+        Toast.makeText(this, "'$name' 불러왔습니다", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun confirmDeleteMacro(name: String) {
+        overlayDialog(
+            AlertDialog.Builder(dialogTheme)
+                .setTitle("'$name' 삭제할까요?")
+                .setPositiveButton("삭제") { _, _ ->
+                    Store.deleteMacro(this, name)
+                    if (config.currentMacro == name) {
+                        config.currentMacro = ""
+                        Store.save(this, config)
+                        updateInfo()
+                    }
+                    Toast.makeText(this, "'$name' 삭제했습니다", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("취소", null)
+        ).show()
     }
 
     private fun openSettings() {

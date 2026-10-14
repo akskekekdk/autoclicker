@@ -54,47 +54,101 @@ data class Config(
     var maxRunMinutes: Int = 0,
     /** 플로팅 패널을 가로로 배치 */
     var panelHorizontal: Boolean = false,
+    /** 마지막으로 저장하거나 불러온 매크로 이름 (없으면 빈 문자열) */
+    var currentMacro: String = "",
 )
 
 object Store {
     private const val PREFS = "autoclicker"
     private const val KEY = "config"
+    private const val MACROS_KEY = "macros"
+
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun load(ctx: Context): Config {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null)
-            ?: return Config()
+        val raw = prefs(ctx).getString(KEY, null) ?: return Config()
         return try {
-            val o = JSONObject(raw)
-            val arr = o.optJSONArray("points") ?: JSONArray()
-            val points = MutableList(arr.length()) { i ->
-                val p = arr.getJSONObject(i)
-                ClickPoint(
-                    p.getInt("x"),
-                    p.getInt("y"),
-                    p.optLong("delayMs", DEFAULT_DELAY_MS),
-                    p.optInt("taps", 1).coerceAtLeast(1),
-                    Action.entries.firstOrNull { it.name == p.optString("action") } ?: Action.TAP,
-                    p.optInt("swipeDp", DEFAULT_SWIPE_DP),
-                    p.optLong("swipeMs", DEFAULT_SWIPE_MS),
-                    p.optInt("chance", 100).coerceIn(0, 100),
-                )
-            }
-            Config(
-                points,
-                o.optInt("repeat", 0),
-                o.optLong("loopDelayMs", 0),
-                o.optLong("defaultDelayMs", DEFAULT_DELAY_MS),
-                o.optBoolean("stopOnTouch", true),
-                o.optLong("tapDurationMs", DEFAULT_TAP_DURATION_MS).coerceIn(1, 2000),
-                o.optInt("maxRunMinutes", 0).coerceAtLeast(0),
-                o.optBoolean("panelHorizontal", false),
-            )
+            fromJson(JSONObject(raw))
         } catch (e: Exception) {
             Config()
         }
     }
 
     fun save(ctx: Context, cfg: Config) {
+        prefs(ctx).edit().putString(KEY, toJson(cfg).toString()).apply()
+    }
+
+    // --------------------------------------------------------------- macros
+    // 매크로 = 포인트 목록과 실행 설정(반복 횟수·반복 사이 대기·실행 시간 제한·누르는 시간)의 이름 붙은 사본.
+    // 화면 터치 정지, 패널 방향 같은 앱 전체 설정은 매크로에 포함하지 않는다.
+
+    private fun macros(ctx: Context): JSONObject =
+        try {
+            JSONObject(prefs(ctx).getString(MACROS_KEY, null) ?: "{}")
+        } catch (e: Exception) {
+            JSONObject()
+        }
+
+    fun macroNames(ctx: Context): List<String> = macros(ctx).keys().asSequence().toList().sorted()
+
+    fun saveMacro(ctx: Context, name: String, cfg: Config) {
+        val all = macros(ctx).put(name, toJson(cfg))
+        prefs(ctx).edit().putString(MACROS_KEY, all.toString()).apply()
+    }
+
+    fun deleteMacro(ctx: Context, name: String) {
+        val all = macros(ctx).apply { remove(name) }
+        prefs(ctx).edit().putString(MACROS_KEY, all.toString()).apply()
+    }
+
+    /** 저장된 매크로의 포인트와 실행 설정을 cfg에 덮어쓴다. 없으면 false. */
+    fun applyMacro(ctx: Context, name: String, cfg: Config): Boolean {
+        val o = macros(ctx).optJSONObject(name) ?: return false
+        val m = try {
+            fromJson(o)
+        } catch (e: Exception) {
+            return false
+        }
+        cfg.points.clear()
+        cfg.points.addAll(m.points)
+        cfg.repeat = m.repeat
+        cfg.loopDelayMs = m.loopDelayMs
+        cfg.maxRunMinutes = m.maxRunMinutes
+        cfg.tapDurationMs = m.tapDurationMs
+        cfg.currentMacro = name
+        return true
+    }
+
+    // ----------------------------------------------------------------- json
+    private fun fromJson(o: JSONObject): Config {
+        val arr = o.optJSONArray("points") ?: JSONArray()
+        val points = MutableList(arr.length()) { i ->
+            val p = arr.getJSONObject(i)
+            ClickPoint(
+                p.getInt("x"),
+                p.getInt("y"),
+                p.optLong("delayMs", DEFAULT_DELAY_MS),
+                p.optInt("taps", 1).coerceAtLeast(1),
+                Action.entries.firstOrNull { it.name == p.optString("action") } ?: Action.TAP,
+                p.optInt("swipeDp", DEFAULT_SWIPE_DP),
+                p.optLong("swipeMs", DEFAULT_SWIPE_MS),
+                p.optInt("chance", 100).coerceIn(0, 100),
+            )
+        }
+        return Config(
+            points,
+            o.optInt("repeat", 0),
+            o.optLong("loopDelayMs", 0),
+            o.optLong("defaultDelayMs", DEFAULT_DELAY_MS),
+            o.optBoolean("stopOnTouch", true),
+            o.optLong("tapDurationMs", DEFAULT_TAP_DURATION_MS).coerceIn(1, 2000),
+            o.optInt("maxRunMinutes", 0).coerceAtLeast(0),
+            o.optBoolean("panelHorizontal", false),
+            o.optString("currentMacro", ""),
+        )
+    }
+
+    private fun toJson(cfg: Config): JSONObject {
         val arr = JSONArray()
         cfg.points.forEach {
             arr.put(
@@ -103,7 +157,7 @@ object Store {
                     .put("chance", it.chance)
             )
         }
-        val o = JSONObject()
+        return JSONObject()
             .put("points", arr)
             .put("repeat", cfg.repeat)
             .put("loopDelayMs", cfg.loopDelayMs)
@@ -112,6 +166,6 @@ object Store {
             .put("tapDurationMs", cfg.tapDurationMs)
             .put("maxRunMinutes", cfg.maxRunMinutes)
             .put("panelHorizontal", cfg.panelHorizontal)
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
+            .put("currentMacro", cfg.currentMacro)
     }
 }
