@@ -99,7 +99,6 @@ class ClickService : AccessibilityService() {
     private var timerEnd = LongArray(0)
     /** 지금 실행 중인 예약 포인트 (-1 = 기본 순서 실행 중) */
     private var activeTimed = -1
-    private var timedRepeat = 0
     private var wakeLock: PowerManager.WakeLock? = null
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
     private var tapRepeat = 0
@@ -443,7 +442,7 @@ class ClickService : AccessibilityService() {
             visibility = if (point.scheduled) View.VISIBLE else View.GONE
         }
         val scheduledCheck = CheckBox(theme).apply {
-            text = "예약 실행 (기본 순서에서 빠지고, 정한 시간에 끼어들어 실행)"
+            text = "예약 실행 (기본 순서에서 빠지고, 정한 시간에 한 번씩 끼어들어 실행)"
             isChecked = point.scheduled
             setOnCheckedChangeListener { _, on -> scheduleBox.visibility = if (on) View.VISIBLE else View.GONE }
         }
@@ -469,20 +468,30 @@ class ClickService : AccessibilityService() {
         actionGroup.setOnCheckedChangeListener { _, _ ->
             swipeBox.visibility = if (selectedAction() == Action.TAP) View.GONE else View.VISIBLE
         }
-        val box = LinearLayout(theme).apply {
+        val normalBox = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), 0)
-            addView(label("동작"))
-            addView(actionGroup)
-            addView(swipeBox)
             addView(label("동작 후 대기 시간 (ms)"))
             addView(delayInput)
             addView(label("연속 반복 횟수"))
             addView(tapsInput)
             addView(label("실행 확률 (%, 100 = 항상)"))
             addView(chanceInput)
+        }
+        val box = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(label("동작"))
+            addView(actionGroup)
+            addView(swipeBox)
+            addView(normalBox)
             addView(scheduledCheck)
             addView(scheduleBox)
+        }
+        // 예약 실행이면 시작/반복 간격/반복 기간으로만 동작하므로 대기·횟수·확률은 숨긴다
+        normalBox.visibility = if (point.scheduled) View.GONE else View.VISIBLE
+        scheduledCheck.setOnCheckedChangeListener { _, on ->
+            scheduleBox.visibility = if (on) View.VISIBLE else View.GONE
+            normalBox.visibility = if (on) View.GONE else View.VISIBLE
         }
         val scroll = ScrollView(theme).apply { addView(box) }
         val apply = { delay: Long, taps: Int ->
@@ -589,17 +598,12 @@ class ClickService : AccessibilityService() {
         if (running) return
         val dm = resources.displayMetrics
         val offset = dp(24) * (config.points.size % 6)
-        // 직전 포인트의 대기 시간과 반복 횟수를 이어받는다 (첫 포인트는 기본값). 동작은 항상 터치.
+        // 마지막 포인트와 위치만 다르고 나머지(동작·대기·횟수·확률·예약 설정)는 똑같이 만든다.
+        // 첫 포인트는 기본값.
+        val x = dm.widthPixels / 2 + offset
+        val y = dm.heightPixels / 2 + offset
         val last = config.points.lastOrNull()
-        config.points.add(
-            ClickPoint(
-                dm.widthPixels / 2 + offset,
-                dm.heightPixels / 2 + offset,
-                last?.delayMs ?: config.defaultDelayMs,
-                last?.taps ?: 1,
-                chance = last?.chance ?: 100,
-            )
-        )
+        config.points.add(last?.copy(x = x, y = y) ?: ClickPoint(x, y, config.defaultDelayMs))
         Store.save(this, config)
         rebuildMarkers()
     }
@@ -892,7 +896,6 @@ class ClickService : AccessibilityService() {
             if (p.durationSec > 0) timerEnd[i] = timerNext[i] + p.durationSec * 1000L
         }
         activeTimed = -1
-        timedRepeat = 0
     }
 
     /** 시각 at까지 실행할 차례가 된 예약 포인트 (가장 이른 것), 없으면 -1 */
@@ -965,7 +968,8 @@ class ClickService : AccessibilityService() {
                 point.swipeMs
             }
             // 확률에 따라 이번 동작을 실제로 할지 정한다. 건너뛰어도 시간은 그대로 흐른다.
-            if (point.chance >= 100 || Random.nextInt(100) < point.chance) {
+            // 예약 포인트는 확률 없이 항상 실행한다.
+            if (timed || point.chance >= 100 || Random.nextInt(100) < point.chance) {
                 builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
                 highlights.add(t to pi)
                 strokes++
@@ -974,15 +978,11 @@ class ClickService : AccessibilityService() {
             steps++
             var gap = point.delayMs
             if (timed) {
-                timedRepeat++
-                if (timedRepeat >= point.taps) {
-                    // 예약 실행 한 번 끝: 다음 묶음에서 기본 순서로 돌아간다
-                    timedRepeat = 0
-                    finishTimerFire(pi)
-                    activeTimed = -1
-                    t += duration + gap
-                    break
-                }
+                // 예약 포인트는 차례마다 동작 한 번만 하고 (대기·반복 횟수 무시) 기본 순서로 돌아간다
+                finishTimerFire(pi)
+                activeTimed = -1
+                t += duration
+                break
             } else {
                 // 다음 터치 위치로 진행하고, 이번 터치 뒤의 대기 시간을 구한다
                 tapRepeat++
