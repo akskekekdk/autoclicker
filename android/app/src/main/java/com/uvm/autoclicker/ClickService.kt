@@ -11,6 +11,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.text.InputType
 import android.text.SpannableString
@@ -22,6 +23,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -56,6 +58,8 @@ class ClickService : AccessibilityService() {
         private const val STOP_GRACE_MS = 800L
         /** 실행 시간 제한 확인/남은 시간 표시 갱신 주기 */
         private const val TIME_CHECK_MS = 30_000L
+        /** 화면 켜짐 잠금 최대 유지 시간 (안전장치, 정지하면 바로 해제) */
+        private const val WAKE_LOCK_MAX_MS = 24 * 60 * 60 * 1000L
     }
 
     private class Marker(val view: TextView, val params: WindowManager.LayoutParams)
@@ -87,7 +91,16 @@ class ClickService : AccessibilityService() {
     private var stoppedAt = 0L
     /** 실행 시간 제한이 있을 때 정지할 시각 (uptime 기준), 없으면 0 */
     private var runEndAt = 0L
+    /** 기본 순서에 들어가는 포인트 번호들 (예약 포인트 제외). index는 이 목록의 위치 */
+    private var mainIdx: List<Int> = emptyList()
     private var index = 0
+    // 예약 포인트 상태: 다음 실행 시각 / 반복이 끝나는 시각 (uptime, 해당 없으면 MAX)
+    private var timerNext = LongArray(0)
+    private var timerEnd = LongArray(0)
+    /** 지금 실행 중인 예약 포인트 (-1 = 기본 순서 실행 중) */
+    private var activeTimed = -1
+    private var timedRepeat = 0
+    private var wakeLock: PowerManager.WakeLock? = null
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
     private var tapRepeat = 0
     private var cycle = 0
@@ -312,14 +325,35 @@ class ClickService : AccessibilityService() {
         markers.forEach { it.view.visibility = if (visible) View.VISIBLE else View.GONE }
     }
 
-    private fun markerBackground(active: Boolean) = GradientDrawable().apply {
+    /** 마커 색: 실행 중인 것은 초록, 예약 포인트는 파랑, 나머지는 빨강 */
+    private fun markerBackground(active: Boolean, scheduled: Boolean = false) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
-        setColor(if (active) Color.parseColor("#AA00C853") else Color.parseColor("#88E53935"))
+        setColor(
+            when {
+                active -> Color.parseColor("#AA00C853")
+                scheduled -> Color.parseColor("#882962FF")
+                else -> Color.parseColor("#88E53935")
+            }
+        )
         setStroke(dp(2), Color.WHITE)
     }
 
+    private fun isScheduled(i: Int) = config.points.getOrNull(i)?.scheduled == true
+
+    /** 초를 h:mm:ss 또는 m:ss로 */
+    private fun formatSec(sec: Int): String =
+        if (sec >= 3600) "%d:%02d:%02d".format(sec / 3600, sec / 60 % 60, sec % 60)
+        else "%d:%02d".format(sec / 60, sec % 60)
+
     /** 마커 글자: 큰 번호 + 작은 대기시간(ms), 여러 번 터치하면 "×횟수". */
     private fun markerText(number: Int, point: ClickPoint): SpannableString {
+        if (point.scheduled) {
+            // 예약 포인트: 첫 실행 시각과 반복 여부(↻)를 표시
+            val repeat = if (point.intervalSec > 0) "↻" else ""
+            return SpannableString("$number\n⏰${formatSec(point.startSec)}$repeat").apply {
+                setSpan(RelativeSizeSpan(0.55f), number.toString().length + 1, length, 0)
+            }
+        }
         val base = if (point.action == Action.TAP) "${point.delayMs}" else "${point.action.arrow}${point.delayMs}"
         val withTaps = if (point.taps > 1) "$base×${point.taps}" else base
         val detail = if (point.chance < 100) "$withTaps\n${point.chance}%" else withTaps
@@ -335,7 +369,7 @@ class ClickService : AccessibilityService() {
             setLineSpacing(0f, 0.85f)
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            background = markerBackground(false)
+            background = markerBackground(false, point.scheduled)
             layoutParams = android.view.ViewGroup.LayoutParams(markerPx, markerPx)
         }
         val params = overlayParams(point.x - markerPx / 2, point.y - markerPx / 2).apply {
@@ -373,6 +407,46 @@ class ClickService : AccessibilityService() {
         val swipeDistInput = numberInput(point.swipeDp)
         val swipeMsInput = numberInput(point.swipeMs)
         val chanceInput = numberInput(point.chance)
+        // 시/분/초 입력 한 줄
+        fun hmsRow(totalSec: Int): Pair<LinearLayout, () -> Int?> {
+            val h = numberInput(totalSec / 3600)
+            val m = numberInput(totalSec / 60 % 60)
+            val sec = numberInput(totalSec % 60)
+            val row = LinearLayout(theme).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                listOf(h to "시", m to "분", sec to "초").forEach { (e, unit) ->
+                    addView(e, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(TextView(theme).apply { text = "$unit " })
+                }
+            }
+            val read = {
+                val hv = h.text.toString().ifBlank { "0" }.toIntOrNull()
+                val mv = m.text.toString().ifBlank { "0" }.toIntOrNull()
+                val sv = sec.text.toString().ifBlank { "0" }.toIntOrNull()
+                if (hv == null || mv == null || sv == null || hv < 0 || mv < 0 || sv < 0) null
+                else hv * 3600 + mv * 60 + sv
+            }
+            return row to read
+        }
+        val (startRow, readStart) = hmsRow(point.startSec)
+        val (intervalRow, readInterval) = hmsRow(point.intervalSec)
+        val (durationRow, readDuration) = hmsRow(point.durationSec)
+        val scheduleBox = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label("시작: 실행을 누르고 나서 이만큼 뒤에 처음 실행"))
+            addView(startRow)
+            addView(label("반복 간격 (0 = 한 번만)"))
+            addView(intervalRow)
+            addView(label("반복 기간 (0 = 실행이 끝날 때까지)"))
+            addView(durationRow)
+            visibility = if (point.scheduled) View.VISIBLE else View.GONE
+        }
+        val scheduledCheck = CheckBox(theme).apply {
+            text = "예약 실행 (기본 순서에서 빠지고, 정한 시간에 끼어들어 실행)"
+            isChecked = point.scheduled
+            setOnCheckedChangeListener { _, on -> scheduleBox.visibility = if (on) View.VISIBLE else View.GONE }
+        }
         val swipeBox = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             addView(label("밀기 거리 (dp, 화면 높이는 보통 700~900)"))
@@ -407,6 +481,8 @@ class ClickService : AccessibilityService() {
             addView(tapsInput)
             addView(label("실행 확률 (%, 100 = 항상)"))
             addView(chanceInput)
+            addView(scheduledCheck)
+            addView(scheduleBox)
         }
         val scroll = ScrollView(theme).apply { addView(box) }
         val apply = { delay: Long, taps: Int ->
@@ -424,7 +500,12 @@ class ClickService : AccessibilityService() {
                 val dist = swipeDistInput.text.toString().toIntOrNull()
                 val swipeMs = swipeMsInput.text.toString().toLongOrNull()
                 val chance = chanceInput.text.toString().toIntOrNull()
-                if (delay == null || delay < 0 || taps == null || taps < 1 ||
+                val startSec = readStart()
+                val intervalSec = readInterval()
+                val durationSec = readDuration()
+                if (startSec == null || intervalSec == null || durationSec == null) {
+                    Toast.makeText(this, "예약 시간은 0 이상의 숫자로 입력하세요", Toast.LENGTH_SHORT).show()
+                } else if (delay == null || delay < 0 || taps == null || taps < 1 ||
                     dist == null || dist < 10 || swipeMs == null || swipeMs < 50 ||
                     chance == null || chance !in 0..100
                 ) {
@@ -437,6 +518,11 @@ class ClickService : AccessibilityService() {
                     point.swipeDp = dist
                     point.swipeMs = swipeMs
                     point.chance = chance
+                    point.scheduled = scheduledCheck.isChecked
+                    point.startSec = startSec
+                    point.intervalSec = intervalSec
+                    point.durationSec = durationSec
+                    markers.getOrNull(index)?.view?.background = markerBackground(false, point.scheduled)
                     apply(delay, taps)
                 }
             }
@@ -655,6 +741,8 @@ class ClickService : AccessibilityService() {
         index = 0
         tapRepeat = 0
         cycle = 0
+        mainIdx = config.points.indices.filter { !config.points[it].scheduled }
+        initTimers(SystemClock.uptimeMillis())
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
         // 실행 중에는 마커가 움직이지 않으므로 터치 좌표를 한 번만 계산한다 (상태바/노치 오프셋 보정)
@@ -665,6 +753,7 @@ class ClickService : AccessibilityService() {
         }
         if (config.stopOnTouch) addTouchCatchers()
         setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행 중에는 켜 둔다
+        acquireWakeLock()
         runEndAt = if (config.maxRunMinutes > 0) {
             SystemClock.uptimeMillis() + config.maxRunMinutes * 60_000L
         } else {
@@ -689,6 +778,28 @@ class ClickService : AccessibilityService() {
         }, minOf(TIME_CHECK_MS, (runEndAt - SystemClock.uptimeMillis()).coerceAtLeast(1)))
     }
 
+    /**
+     * 자동 터치는 '사용자 활동'으로 치지 않아 화면이 어두워지다 꺼질 수 있다.
+     * 실행 중에는 화면 켜짐 잠금을 잡아 화면을 밝게 유지한다 (정지하면 해제).
+     */
+    @Suppress("DEPRECATION")
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+            "autoclicker:run",
+        ).apply {
+            setReferenceCounted(false)
+            acquire(WAKE_LOCK_MAX_MS)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
     private fun setKeepScreenOn(on: Boolean) {
         val view = panel ?: return
         panelParams.flags = if (on) {
@@ -705,10 +816,11 @@ class ClickService : AccessibilityService() {
         handler.removeCallbacksAndMessages(null)
         removeTouchCatchers()
         setKeepScreenOn(false)
+        releaseWakeLock()
         runEndAt = 0L
         stoppedAt = SystemClock.uptimeMillis()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
-        markers.forEach { it.view.background = markerBackground(false) }
+        markers.forEachIndexed { k, m -> m.view.background = markerBackground(false, isScheduled(k)) }
         // 이미 보낸 터치가 끝날 때까지 기다렸다가 마커를 다시 만질 수 있게 한다
         handler.postDelayed({ if (!running) setMarkersTouchable(true) }, STOP_GRACE_MS)
         applyMarkerVisibility()
@@ -741,6 +853,7 @@ class ClickService : AccessibilityService() {
             val params = overlayParams(r[0], r[1]).apply {
                 width = r[2] - r[0]
                 height = r[3] - r[1]
+                flags = flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             }
             wm.addView(view, params)
             catchers.add(view)
@@ -772,12 +885,56 @@ class ClickService : AccessibilityService() {
         return out
     }
 
+    /** 실행 시작 시 예약 포인트들의 첫 실행 시각과 끝 시각을 정한다. */
+    private fun initTimers(now: Long) {
+        val n = config.points.size
+        timerNext = LongArray(n) { Long.MAX_VALUE }
+        timerEnd = LongArray(n) { Long.MAX_VALUE }
+        config.points.forEachIndexed { i, p ->
+            if (!p.scheduled) return@forEachIndexed
+            timerNext[i] = now + p.startSec * 1000L
+            if (p.durationSec > 0) timerEnd[i] = timerNext[i] + p.durationSec * 1000L
+        }
+        activeTimed = -1
+        timedRepeat = 0
+    }
+
+    /** 시각 at까지 실행할 차례가 된 예약 포인트 (가장 이른 것), 없으면 -1 */
+    private fun dueTimer(at: Long): Int {
+        var best = -1
+        for (i in timerNext.indices) {
+            if (timerNext[i] <= at && (best < 0 || timerNext[i] < timerNext[best])) best = i
+        }
+        return best
+    }
+
+    /** 예약 포인트 한 번 실행을 마친 뒤 다음 실행 시각을 정한다 (한 번만이거나 기간이 끝나면 종료). */
+    private fun finishTimerFire(i: Int) {
+        val p = config.points[i]
+        val next = if (p.intervalSec > 0) timerNext[i] + p.intervalSec * 1000L else Long.MAX_VALUE
+        timerNext[i] = if (next < timerEnd[i]) next else Long.MAX_VALUE
+    }
+
     /**
-     * 다음 터치 여러 개를 하나의 제스처로 묶어 보낸다. 터치마다 따로 보내면 생기는
+     * 다음 동작 여러 개를 하나의 제스처로 묶어 보낸다. 터치마다 따로 보내면 생기는
      * 지연이 사라져 연타가 빨라진다. 정지가 늦어지지 않도록 묶음 길이는 BATCH_WINDOW_MS로 제한한다.
+     * 예약 포인트는 차례가 되면 기본 순서 사이에 끼어들어 실행된다.
      */
     private fun dispatchBatch() {
         if (!running) return
+        val now = SystemClock.uptimeMillis()
+        if (activeTimed < 0) activeTimed = dueTimer(now)
+        if (activeTimed < 0 && mainIdx.isEmpty()) {
+            // 기본 순서가 없고 예약 포인트만 있는 경우: 다음 예약 시각까지 기다린다
+            val next = timerNext.minOrNull() ?: Long.MAX_VALUE
+            if (next == Long.MAX_VALUE) {
+                stop()
+                Toast.makeText(this, "예약 동작을 모두 마쳤습니다", Toast.LENGTH_SHORT).show()
+            } else {
+                handler.postDelayed({ dispatchBatch() }, (next - now).coerceIn(16, 1000))
+            }
+            return
+        }
         val maxStrokes = minOf(MAX_BATCH_STROKES, GestureDescription.getMaxStrokeCount())
         val tapMs = config.tapDurationMs
         val builder = GestureDescription.Builder()
@@ -788,8 +945,10 @@ class ClickService : AccessibilityService() {
         var lastStrokeEnd = 0L
         var finished = false
         while (strokes < maxStrokes && (steps == 0 || t <= BATCH_WINDOW_MS)) {
-            val p = targets[index]
-            val point = config.points[index]
+            val timed = activeTimed >= 0
+            val pi = if (timed) activeTimed else mainIdx[index]
+            val p = targets[pi]
+            val point = config.points[pi]
             val path = Path().apply { moveTo(p[0], p[1]) }
             val duration = if (point.action == Action.TAP) {
                 tapMs
@@ -812,36 +971,52 @@ class ClickService : AccessibilityService() {
             // 확률에 따라 이번 동작을 실제로 할지 정한다. 건너뛰어도 시간은 그대로 흐른다.
             if (point.chance >= 100 || Random.nextInt(100) < point.chance) {
                 builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
-                highlights.add(t to index)
+                highlights.add(t to pi)
                 strokes++
                 lastStrokeEnd = t + duration
             }
             steps++
-            // 다음 터치 위치로 진행하고, 이번 터치 뒤의 대기 시간을 구한다
             var gap = point.delayMs
-            tapRepeat++
-            if (tapRepeat >= point.taps) {
-                tapRepeat = 0
-                index++
-                if (index >= targets.size) {
-                    index = 0
-                    cycle++
-                    if (config.repeat in 1..cycle) {
-                        finished = true
-                    } else {
-                        gap += config.loopDelayMs
+            if (timed) {
+                timedRepeat++
+                if (timedRepeat >= point.taps) {
+                    // 예약 실행 한 번 끝: 다음 묶음에서 기본 순서로 돌아간다
+                    timedRepeat = 0
+                    finishTimerFire(pi)
+                    activeTimed = -1
+                    t += duration + gap
+                    break
+                }
+            } else {
+                // 다음 터치 위치로 진행하고, 이번 터치 뒤의 대기 시간을 구한다
+                tapRepeat++
+                if (tapRepeat >= point.taps) {
+                    tapRepeat = 0
+                    index++
+                    if (index >= mainIdx.size) {
+                        index = 0
+                        cycle++
+                        if (config.repeat in 1..cycle) {
+                            finished = true
+                        } else {
+                            gap += config.loopDelayMs
+                        }
                     }
                 }
             }
             t += duration + gap
             if (finished) break
+            // 예약 포인트 차례가 되면 묶음을 끊고 다음 묶음에서 실행한다
+            if (!timed && dueTimer(now + t) >= 0) break
         }
         // 마지막으로 실제 실행한 동작이 끝난 뒤부터 이번 묶음이 끝날 때까지 남은 시간
         val waitAfter = t - lastStrokeEnd
 
         highlights.forEach { (at, i) ->
             handler.postDelayed({
-                if (running) markers.forEachIndexed { k, m -> m.view.background = markerBackground(k == i) }
+                if (running) markers.forEachIndexed { k, m ->
+                    m.view.background = markerBackground(k == i, config.points[k].scheduled)
+                }
             }, at)
         }
         val afterBatch = {

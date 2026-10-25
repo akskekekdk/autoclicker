@@ -36,6 +36,14 @@ data class ClickPoint(
     var swipeMs: Long = DEFAULT_SWIPE_MS,
     /** 동작이 실제로 실행될 확률(%). 실행하지 않아도 시간은 그대로 흐른다 */
     var chance: Int = 100,
+    /**
+     * 예약 실행: true이면 기본 순서에서 빠지고, 실행 시작 startSec초 뒤에 처음 실행한 뒤
+     * intervalSec초마다 반복한다 (0 = 한 번만). durationSec초 동안만 반복 (0 = 실행이 끝날 때까지).
+     */
+    var scheduled: Boolean = false,
+    var startSec: Int = 0,
+    var intervalSec: Int = 0,
+    var durationSec: Int = 0,
 )
 
 data class Config(
@@ -133,6 +141,10 @@ object Store {
                 p.optInt("swipeDp", DEFAULT_SWIPE_DP),
                 p.optLong("swipeMs", DEFAULT_SWIPE_MS),
                 p.optInt("chance", 100).coerceIn(0, 100),
+                p.optBoolean("scheduled", false),
+                p.optInt("startSec", 0).coerceAtLeast(0),
+                p.optInt("intervalSec", 0).coerceAtLeast(0),
+                p.optInt("durationSec", 0).coerceAtLeast(0),
             )
         }
         return Config(
@@ -155,6 +167,8 @@ object Store {
                 JSONObject().put("x", it.x).put("y", it.y).put("delayMs", it.delayMs).put("taps", it.taps)
                     .put("action", it.action.name).put("swipeDp", it.swipeDp).put("swipeMs", it.swipeMs)
                     .put("chance", it.chance)
+                    .put("scheduled", it.scheduled).put("startSec", it.startSec)
+                    .put("intervalSec", it.intervalSec).put("durationSec", it.durationSec)
             )
         }
         return JSONObject()
