@@ -99,6 +99,8 @@ class ClickService : AccessibilityService() {
     private var timerEnd = LongArray(0)
     /** 지금 실행 중인 예약 포인트 (-1 = 기본 순서 실행 중) */
     private var activeTimed = -1
+    /** 지금 예약 포인트를 몇 번 터치했는지 */
+    private var timedRepeat = 0
     private var wakeLock: PowerManager.WakeLock? = null
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
     private var tapRepeat = 0
@@ -442,7 +444,7 @@ class ClickService : AccessibilityService() {
             visibility = if (point.scheduled) View.VISIBLE else View.GONE
         }
         val scheduledCheck = CheckBox(theme).apply {
-            text = "예약 실행 (기본 순서에서 빠지고, 정한 시간에 한 번씩 끼어들어 실행)"
+            text = "예약 실행 (기본 순서에서 빠지고, 정한 시간에 끼어들어 위 설정대로 실행)"
             isChecked = point.scheduled
             setOnCheckedChangeListener { _, on -> scheduleBox.visibility = if (on) View.VISIBLE else View.GONE }
         }
@@ -487,12 +489,7 @@ class ClickService : AccessibilityService() {
             addView(scheduledCheck)
             addView(scheduleBox)
         }
-        // 예약 실행이면 시작/반복 간격/반복 기간으로만 동작하므로 대기·횟수·확률은 숨긴다
-        normalBox.visibility = if (point.scheduled) View.GONE else View.VISIBLE
-        scheduledCheck.setOnCheckedChangeListener { _, on ->
-            scheduleBox.visibility = if (on) View.VISIBLE else View.GONE
-            normalBox.visibility = if (on) View.GONE else View.VISIBLE
-        }
+
         val scroll = ScrollView(theme).apply { addView(box) }
         val apply = { delay: Long, taps: Int ->
             point.delayMs = delay
@@ -896,16 +893,11 @@ class ClickService : AccessibilityService() {
             if (p.durationSec > 0) timerEnd[i] = timerNext[i] + p.durationSec * 1000L
         }
         activeTimed = -1
+        timedRepeat = 0
     }
 
-    /** 시각 at까지 실행할 차례가 된 예약 포인트 (가장 이른 것), 없으면 -1 */
-    private fun dueTimer(at: Long): Int {
-        var best = -1
-        for (i in timerNext.indices) {
-            if (timerNext[i] <= at && (best < 0 || timerNext[i] < timerNext[best])) best = i
-        }
-        return best
-    }
+    /** 시각 at까지 차례가 된 예약 포인트 중 번호가 가장 앞선 것, 없으면 -1 */
+    private fun dueTimer(at: Long): Int = timerNext.indices.firstOrNull { timerNext[it] <= at } ?: -1
 
     /** 예약 포인트 한 번 실행을 마친 뒤 다음 실행 시각을 정한다 (한 번만이거나 기간이 끝나면 종료). */
     private fun finishTimerFire(i: Int) {
@@ -944,6 +936,8 @@ class ClickService : AccessibilityService() {
         var lastStrokeEnd = 0L
         var finished = false
         while (strokes < maxStrokes && (steps == 0 || t <= BATCH_WINDOW_MS)) {
+            // 예약 포인트만 있는 매크로에서 예약 실행이 끝나면 묶음을 마친다
+            if (activeTimed < 0 && mainIdx.isEmpty()) break
             val timed = activeTimed >= 0
             val pi = if (timed) activeTimed else mainIdx[index]
             val p = targets[pi]
@@ -968,8 +962,7 @@ class ClickService : AccessibilityService() {
                 point.swipeMs
             }
             // 확률에 따라 이번 동작을 실제로 할지 정한다. 건너뛰어도 시간은 그대로 흐른다.
-            // 예약 포인트는 확률 없이 항상 실행한다.
-            if (timed || point.chance >= 100 || Random.nextInt(100) < point.chance) {
+            if (point.chance >= 100 || Random.nextInt(100) < point.chance) {
                 builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
                 highlights.add(t to pi)
                 strokes++
@@ -978,11 +971,15 @@ class ClickService : AccessibilityService() {
             steps++
             var gap = point.delayMs
             if (timed) {
-                // 예약 포인트는 차례마다 동작 한 번만 하고 (대기·반복 횟수 무시) 기본 순서로 돌아간다
-                finishTimerFire(pi)
-                activeTimed = -1
-                t += duration
-                break
+                // 예약 포인트도 반복 횟수만큼, 매번 대기 시간을 두고 실행한다
+                timedRepeat++
+                if (timedRepeat >= point.taps) {
+                    timedRepeat = 0
+                    finishTimerFire(pi)
+                    // 같이 차례가 된 다음 예약 포인트를 번호 순서대로 바로 이어서 실행하고,
+                    // 더 없으면 기본 순서로 돌아간다
+                    activeTimed = dueTimer(now + t + duration + gap)
+                }
             } else {
                 // 다음 터치 위치로 진행하고, 이번 터치 뒤의 대기 시간을 구한다
                 tapRepeat++

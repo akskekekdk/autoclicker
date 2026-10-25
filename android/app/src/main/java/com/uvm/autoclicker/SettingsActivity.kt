@@ -262,7 +262,7 @@ class SettingsActivity : Activity() {
                     renderPoints()
                 }
             }
-            val tag = if (p.scheduled) "  [예약 · 대기/횟수 미사용]" else ""
+            val tag = if (p.scheduled) "  [예약]" else ""
             pointsBox.addView(text("#${i + 1}  (${p.x}, ${p.y})$tag").apply {
                 setTypeface(typeface, Typeface.BOLD)
                 setPadding(0, dp(8), 0, 0)
