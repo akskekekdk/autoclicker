@@ -91,6 +91,8 @@ class ClickService : AccessibilityService() {
     private var stoppedAt = 0L
     /** 실행 시간 제한이 있을 때 정지할 시각 (uptime 기준), 없으면 0 */
     private var runEndAt = 0L
+    /** 시작 대기 중일 때 실제로 시작할 시각 (uptime), 대기 중이 아니면 0 */
+    private var startAt = 0L
     /** 기본 순서에 들어가는 포인트 번호들 (예약 포인트 제외). index는 이 목록의 위치 */
     private var mainIdx: List<Int> = emptyList()
     private var index = 0
@@ -575,7 +577,10 @@ class ClickService : AccessibilityService() {
 
     private fun updateInfo() {
         if (!::infoText.isInitialized) return
-        infoText.text = if (running) {
+        infoText.text = if (running && startAt > 0) {
+            val sec = ((startAt - SystemClock.uptimeMillis()).coerceAtLeast(0) + 999) / 1000
+            "시작까지\n${formatSec(sec.toInt())}"
+        } else if (running) {
             val total = if (config.repeat == 0) "∞" else config.repeat.toString()
             val left = if (runEndAt > 0) {
                 val min = ((runEndAt - SystemClock.uptimeMillis()).coerceAtLeast(0) + 59_999) / 60_000
@@ -735,13 +740,41 @@ class ClickService : AccessibilityService() {
             return
         }
         running = true
+        playBtn.text = buttonText("■", "정지")
+        setMarkersTouchable(false)
+        setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행(과 시작 대기) 중에는 켜 둔다
+        acquireWakeLock()
+        if (config.startDelaySec > 0) {
+            // 시작 대기: 이 동안은 화면을 자유롭게 쓸 수 있고, 시간이 되면 매크로를 시작한다 (■로 취소)
+            startAt = SystemClock.uptimeMillis() + config.startDelaySec * 1000L
+            updateInfo()
+            scheduleStartCountdown()
+        } else {
+            beginRun()
+        }
+    }
+
+    /** 시작 대기 중 남은 시간을 1초마다 표시하고, 시간이 되면 실행을 시작한다. */
+    private fun scheduleStartCountdown() {
+        handler.postDelayed({
+            if (!running || startAt == 0L) return@postDelayed
+            if (SystemClock.uptimeMillis() >= startAt) {
+                startAt = 0L
+                beginRun()
+            } else {
+                updateInfo()
+                scheduleStartCountdown()
+            }
+        }, ((startAt - SystemClock.uptimeMillis()) % 1000).let { if (it <= 0) 1000L else it })
+    }
+
+    /** 실제 실행 시작: 실행 시간 제한과 예약 포인트 시각은 이때부터 센다. */
+    private fun beginRun() {
         index = 0
         tapRepeat = 0
         cycle = 0
         mainIdx = config.points.indices.filter { !config.points[it].scheduled }
         initTimers(SystemClock.uptimeMillis())
-        playBtn.text = buttonText("■", "정지")
-        setMarkersTouchable(false)
         // 실행 중에는 마커가 움직이지 않으므로 터치 좌표를 한 번만 계산한다 (상태바/노치 오프셋 보정)
         targets = markers.map { m ->
             val loc = IntArray(2)
@@ -749,8 +782,6 @@ class ClickService : AccessibilityService() {
             floatArrayOf((loc[0] + m.view.width / 2).toFloat(), (loc[1] + m.view.height / 2).toFloat())
         }
         if (config.stopOnTouch) addTouchCatchers()
-        setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행 중에는 켜 둔다
-        acquireWakeLock()
         runEndAt = if (config.maxRunMinutes > 0) {
             SystemClock.uptimeMillis() + config.maxRunMinutes * 60_000L
         } else {
@@ -815,6 +846,7 @@ class ClickService : AccessibilityService() {
         setKeepScreenOn(false)
         releaseWakeLock()
         runEndAt = 0L
+        startAt = 0L
         stoppedAt = SystemClock.uptimeMillis()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEachIndexed { k, m -> m.view.background = markerBackground(false, isScheduled(k)) }

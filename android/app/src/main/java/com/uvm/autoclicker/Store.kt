@@ -64,6 +64,8 @@ data class Config(
     var panelHorizontal: Boolean = false,
     /** 마지막으로 저장하거나 불러온 매크로 이름 (없으면 빈 문자열) */
     var currentMacro: String = "",
+    /** ▶을 누르고 실제로 시작하기까지 기다리는 시간(초). 0 = 바로 시작 */
+    var startDelaySec: Int = 0,
 )
 
 object Store {
@@ -87,7 +89,7 @@ object Store {
     }
 
     // --------------------------------------------------------------- macros
-    // 매크로 = 포인트 목록과 실행 설정(반복 횟수·반복 사이 대기·실행 시간 제한·누르는 시간)의 이름 붙은 사본.
+    // 매크로 = 포인트 목록과 실행 설정(반복 횟수·반복 사이 대기·실행 시간 제한·누르는 시간·시작 대기)의 이름 붙은 사본.
     // 화면 터치 정지, 패널 방향 같은 앱 전체 설정은 매크로에 포함하지 않는다.
 
     private fun macros(ctx: Context): JSONObject =
@@ -123,6 +125,7 @@ object Store {
         cfg.loopDelayMs = m.loopDelayMs
         cfg.maxRunMinutes = m.maxRunMinutes
         cfg.tapDurationMs = m.tapDurationMs
+        cfg.startDelaySec = m.startDelaySec
         cfg.currentMacro = name
         return true
     }
@@ -157,6 +160,7 @@ object Store {
             o.optInt("maxRunMinutes", 0).coerceAtLeast(0),
             o.optBoolean("panelHorizontal", false),
             o.optString("currentMacro", ""),
+            o.optInt("startDelaySec", 0).coerceAtLeast(0),
         )
     }
 
@@ -181,5 +185,6 @@ object Store {
             .put("maxRunMinutes", cfg.maxRunMinutes)
             .put("panelHorizontal", cfg.panelHorizontal)
             .put("currentMacro", cfg.currentMacro)
+            .put("startDelaySec", cfg.startDelaySec)
     }
 }

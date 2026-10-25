@@ -26,6 +26,9 @@ class SettingsActivity : Activity() {
     private lateinit var panelBtn: Button
     private lateinit var repeatEdit: EditText
     private lateinit var loopDelayEdit: EditText
+    private lateinit var startHoursEdit: EditText
+    private lateinit var startMinutesEdit: EditText
+    private lateinit var startSecondsEdit: EditText
     private lateinit var limitHoursEdit: EditText
     private lateinit var limitMinutesEdit: EditText
     private lateinit var pointsBox: LinearLayout
@@ -93,6 +96,22 @@ class SettingsActivity : Activity() {
         root.addView(title("3. 반복 설정"))
         repeatEdit = numberEdit()
         loopDelayEdit = numberEdit()
+        startHoursEdit = numberEdit()
+        startMinutesEdit = numberEdit()
+        startSecondsEdit = numberEdit()
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@SettingsActivity).apply {
+                text = "시작 대기"
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            listOf(startHoursEdit to "시 ", startMinutesEdit to "분 ", startSecondsEdit to "초").forEach { (e, unit) ->
+                addView(e, LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(TextView(this@SettingsActivity).apply { text = unit })
+            }
+        })
+        root.addView(text("▶을 누르고 이 시간이 지난 뒤 매크로 전체를 시작합니다 (0 = 바로). 기다리는 동안 패널에 남은 시간이 보이고 ■로 취소할 수 있습니다."))
         root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
         root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
         limitHoursEdit = numberEdit()
@@ -199,6 +218,9 @@ class SettingsActivity : Activity() {
         config = Store.load(this)
         repeatEdit.setText(config.repeat.toString())
         loopDelayEdit.setText(config.loopDelayMs.toString())
+        startHoursEdit.setText((config.startDelaySec / 3600).toString())
+        startMinutesEdit.setText((config.startDelaySec / 60 % 60).toString())
+        startSecondsEdit.setText((config.startDelaySec % 60).toString())
         limitHoursEdit.setText((config.maxRunMinutes / 60).toString())
         limitMinutesEdit.setText((config.maxRunMinutes % 60).toString())
         defaultDelayEdit.setText(config.defaultDelayMs.toString())
@@ -284,6 +306,13 @@ class SettingsActivity : Activity() {
     private fun save(): Boolean {
         val repeat = repeatEdit.text.toString().toIntOrNull()
         val loopDelay = loopDelayEdit.text.toString().toLongOrNull()
+        val startH = startHoursEdit.text.toString().ifBlank { "0" }.toIntOrNull()
+        val startM = startMinutesEdit.text.toString().ifBlank { "0" }.toIntOrNull()
+        val startS = startSecondsEdit.text.toString().ifBlank { "0" }.toIntOrNull()
+        if (startH == null || startM == null || startS == null || startH < 0 || startM < 0 || startS < 0) {
+            Toast.makeText(this, "시작 대기는 0 이상의 숫자로 입력하세요", Toast.LENGTH_SHORT).show()
+            return false
+        }
         val limitHours = limitHoursEdit.text.toString().ifBlank { "0" }.toIntOrNull()
         val limitMinutes = limitMinutesEdit.text.toString().ifBlank { "0" }.toIntOrNull()
         if (limitHours == null || limitHours < 0 || limitMinutes == null || limitMinutes < 0) {
@@ -316,6 +345,7 @@ class SettingsActivity : Activity() {
         latest.repeat = repeat
         latest.loopDelayMs = loopDelay
         latest.maxRunMinutes = limitHours * 60 + limitMinutes
+        latest.startDelaySec = startH * 3600 + startM * 60 + startS
         latest.defaultDelayMs = defaultDelay
         latest.stopOnTouch = stopOnTouchCheck.isChecked
         latest.tapDurationMs = tapDuration
