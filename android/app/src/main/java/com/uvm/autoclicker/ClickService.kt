@@ -679,11 +679,7 @@ class ClickService : AccessibilityService() {
 
     private fun loadMacro(name: String) {
         if (running) return
-        // 지금 매크로에서 바꾼 내용을 잃지 않도록 먼저 그 매크로에 자동 저장
-        val current = config.currentMacro
-        if (current.isNotEmpty() && current != name && current in Store.macroNames(this)) {
-            Store.saveMacro(this, current, config)
-        }
+        // 저장된 매크로는 '현재 상태 저장'을 눌렀을 때만 바뀐다 (불러온 뒤 수정한 내용은 자동 저장하지 않음)
         if (!Store.applyMacro(this, name, config)) {
             Toast.makeText(this, "'$name'을(를) 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
             return
