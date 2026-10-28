@@ -71,6 +71,8 @@ data class Config(
     var startDelaySec: Int = 0,
     /** 예약 세션 목록. 비어 있지 않으면 ▶을 누른 시점 기준으로 각 세션 시각에 매크로를 반복 실행 */
     var sessions: MutableList<RunSession> = mutableListOf(),
+    /** 예약/시작 대기 중 게임이 끊기지 않도록 이 간격(초)마다 1번 포인트를 한 번 터치. 0 = 끔 */
+    var keepAliveSec: Int = 0,
 )
 
 object Store {
@@ -132,6 +134,7 @@ object Store {
         cfg.tapDurationMs = m.tapDurationMs
         cfg.startDelaySec = m.startDelaySec
         cfg.sessions = m.sessions.map { it.copy() }.toMutableList()
+        cfg.keepAliveSec = m.keepAliveSec
         cfg.currentMacro = name
         return true
     }
@@ -174,6 +177,7 @@ object Store {
                     RunSession(so.optInt("startSec", 0).coerceAtLeast(0), so.optInt("repeats", 1).coerceAtLeast(1))
                 }
             },
+            o.optInt("keepAliveSec", 0).coerceAtLeast(0),
         )
     }
 
@@ -202,5 +206,6 @@ object Store {
             .put("sessions", JSONArray().apply {
                 cfg.sessions.forEach { put(JSONObject().put("startSec", it.startSec).put("repeats", it.repeats)) }
             })
+            .put("keepAliveSec", cfg.keepAliveSec)
     }
 }

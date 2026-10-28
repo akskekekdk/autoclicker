@@ -29,6 +29,7 @@ class SettingsActivity : Activity() {
     private lateinit var sessionsBox: LinearLayout
     private val sessionRows = mutableListOf<Triple<EditText, EditText, EditText>>() // 시, 분, 초
     private val sessionRepeatEdits = mutableListOf<EditText>()
+    private lateinit var keepAliveEdit: EditText
     private lateinit var startHoursEdit: EditText
     private lateinit var startMinutesEdit: EditText
     private lateinit var startSecondsEdit: EditText
@@ -120,7 +121,10 @@ class SettingsActivity : Activity() {
         root.addView(text("▶을 누른 시점 기준으로, 정한 시간마다 매크로 전체를 '횟수'만큼 실행합니다. 예: 3시간 뒤 10회, 5시간 15분 뒤 5회. 한 줄이라도 있으면 위의 '시작 대기'는 무시됩니다."))
         sessionsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(sessionsBox)
-        root.addView(button("세션 추가") { addSessionRow(0, 0, 0, 1); }) 
+        root.addView(button("세션 추가") { addSessionRow(0, 0, 0, 1); })
+        keepAliveEdit = numberEdit()
+        root.addView(row("대기 중 유지 탭 간격 (초, 0 = 끔)", keepAliveEdit))
+        root.addView(text("예약/시작 대기 동안 이 간격마다 1번 포인트를 한 번 눌러 게임이 끊기는 것을 막습니다. 1번 포인트는 눌러도 안전한 빈 곳에 두세요."))
         root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
         root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
         limitHoursEdit = numberEdit()
@@ -231,6 +235,7 @@ class SettingsActivity : Activity() {
         sessionRows.clear()
         sessionRepeatEdits.clear()
         config.sessions.forEach { addSessionRow(it.startSec / 3600, it.startSec / 60 % 60, it.startSec % 60, it.repeats) }
+        keepAliveEdit.setText(config.keepAliveSec.toString())
         startHoursEdit.setText((config.startDelaySec / 3600).toString())
         startMinutesEdit.setText((config.startDelaySec / 60 % 60).toString())
         startSecondsEdit.setText((config.startDelaySec % 60).toString())
@@ -407,6 +412,12 @@ class SettingsActivity : Activity() {
         }
         newSessions.sortBy { it.startSec }
         latest.sessions = newSessions
+        val keepAlive = keepAliveEdit.text.toString().ifBlank { "0" }.toIntOrNull()
+        if (keepAlive == null || keepAlive < 0) {
+            Toast.makeText(this, "유지 탭 간격은 0 이상의 숫자로 입력하세요", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        latest.keepAliveSec = keepAlive
         latest.defaultDelayMs = defaultDelay
         latest.stopOnTouch = stopOnTouchCheck.isChecked
         latest.tapDurationMs = tapDuration

@@ -763,6 +763,7 @@ class ClickService : AccessibilityService() {
             startAt = runBaseAt + config.startDelaySec * 1000L
             updateInfo()
             scheduleStartCountdown()
+            scheduleKeepAlive()
         } else {
             activeRepeat = config.repeat
             beginRun()
@@ -789,6 +790,7 @@ class ClickService : AccessibilityService() {
         } else {
             updateInfo()
             scheduleStartCountdown()
+            scheduleKeepAlive()
         }
     }
 
@@ -818,8 +820,31 @@ class ClickService : AccessibilityService() {
         }, ((startAt - SystemClock.uptimeMillis()) % 1000).let { if (it <= 0) 1000L else it })
     }
 
+    /** 대기 중 게임이 끊기지 않도록 일정 간격으로 1번 포인트를 한 번 터치한다. */
+    private fun scheduleKeepAlive() {
+        if (config.keepAliveSec <= 0 || markers.isEmpty()) return
+        handler.postDelayed(keepAliveRunnable, config.keepAliveSec * 1000L)
+    }
+
+    private val keepAliveRunnable = Runnable {
+        if (running && startAt > 0 && config.keepAliveSec > 0 && markers.isNotEmpty()) {
+            val v = markers[0].view
+            val loc = IntArray(2)
+            v.getLocationOnScreen(loc)
+            val cx = (loc[0] + v.width / 2).toFloat()
+            val cy = (loc[1] + v.height / 2).toFloat()
+            val path = Path().apply { moveTo(cx, cy) }
+            val g = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, 30))
+                .build()
+            dispatchGesture(g, null, handler)
+            scheduleKeepAlive()
+        }
+    }
+
     /** 실제 실행 시작: 실행 시간 제한과 예약 포인트 시각은 이때부터 센다. */
     private fun beginRun() {
+        handler.removeCallbacks(keepAliveRunnable)
         acquireWakeLock(bright = true)
         setScreenDimHint(false)
         index = 0
