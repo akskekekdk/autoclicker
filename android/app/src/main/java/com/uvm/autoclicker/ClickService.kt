@@ -750,7 +750,8 @@ class ClickService : AccessibilityService() {
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
         setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행(과 대기) 중에는 켜 둔다
-        acquireWakeLock()
+        acquireWakeLock(bright = false)
+        setScreenDimHint(true)
         runBaseAt = SystemClock.uptimeMillis()
         if (config.sessions.isNotEmpty()) {
             // 예약 세션 모드: 각 세션 시각에 매크로를 그 횟수만큼 실행 (시작 대기 설정은 무시)
@@ -771,6 +772,8 @@ class ClickService : AccessibilityService() {
     /** 다음 예약 세션 시각까지 기다렸다가 매크로를 실행한다. 세션을 모두 마치면 정지. */
     private fun waitForSession() {
         removeTouchCatchers() // 대기 중에는 화면을 자유롭게 쓸 수 있게 한다
+        acquireWakeLock(bright = false)
+        setScreenDimHint(true)
         handler.removeCallbacksAndMessages(null)
         if (sessionIdx >= config.sessions.size) {
             stop()
@@ -817,6 +820,8 @@ class ClickService : AccessibilityService() {
 
     /** 실제 실행 시작: 실행 시간 제한과 예약 포인트 시각은 이때부터 센다. */
     private fun beginRun() {
+        acquireWakeLock(bright = true)
+        setScreenDimHint(false)
         index = 0
         tapRepeat = 0
         cycle = 0
@@ -856,17 +861,26 @@ class ClickService : AccessibilityService() {
      * 자동 터치는 '사용자 활동'으로 치지 않아 화면이 어두워지다 꺼질 수 있다.
      * 실행 중에는 화면 켜짐 잠금을 잡아 화면을 밝게 유지한다 (정지하면 해제).
      */
+    private var wakeLockBright = false
+
     @Suppress("DEPRECATION")
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
+    private fun acquireWakeLock(bright: Boolean) {
+        if (wakeLock?.isHeld == true && wakeLockBright == bright) return
+        releaseWakeLock()
+        wakeLockBright = bright
         val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
-            "autoclicker:run",
-        ).apply {
+        val level = if (bright) PowerManager.SCREEN_BRIGHT_WAKE_LOCK else PowerManager.SCREEN_DIM_WAKE_LOCK
+        wakeLock = pm.newWakeLock(level or PowerManager.ON_AFTER_RELEASE, "autoclicker:run").apply {
             setReferenceCounted(false)
             acquire(WAKE_LOCK_MAX_MS)
         }
+    }
+
+    /** 대기 중에는 화면을 어둡게 유지해 열·번인을 줄인다. */
+    private fun setScreenDimHint(dim: Boolean) {
+        val view = panel ?: return
+        panelParams.screenBrightness = if (dim) 0.05f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        wm.updateViewLayout(view, panelParams)
     }
 
     private fun releaseWakeLock() {
