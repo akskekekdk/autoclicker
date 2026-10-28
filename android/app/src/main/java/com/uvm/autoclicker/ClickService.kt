@@ -91,8 +91,14 @@ class ClickService : AccessibilityService() {
     private var stoppedAt = 0L
     /** 실행 시간 제한이 있을 때 정지할 시각 (uptime 기준), 없으면 0 */
     private var runEndAt = 0L
-    /** 시작 대기 중일 때 실제로 시작할 시각 (uptime), 대기 중이 아니면 0 */
+    /** 시작 대기(또는 다음 예약 세션 대기) 중 실제로 시작할 시각 (uptime), 대기 중이 아니면 0 */
     private var startAt = 0L
+    /** 지금 실행 중인 반복 횟수 상한 (일반 실행=config.repeat, 예약 세션=그 세션 횟수) */
+    private var activeRepeat = 0
+    /** ▶을 누른 시각 (예약 세션 시각의 기준) */
+    private var runBaseAt = 0L
+    /** 지금 대기/실행 중인 예약 세션 번호 */
+    private var sessionIdx = 0
     /** 기본 순서에 들어가는 포인트 번호들 (예약 포인트 제외). index는 이 목록의 위치 */
     private var mainIdx: List<Int> = emptyList()
     private var index = 0
@@ -579,9 +585,10 @@ class ClickService : AccessibilityService() {
         if (!::infoText.isInitialized) return
         infoText.text = if (running && startAt > 0) {
             val sec = ((startAt - SystemClock.uptimeMillis()).coerceAtLeast(0) + 999) / 1000
-            "시작까지\n${formatSec(sec.toInt())}"
+            val head = if (config.sessions.isNotEmpty()) "${sessionIdx + 1}번 세션까지" else "시작까지"
+            "$head\n${formatSec(sec.toInt())}"
         } else if (running) {
-            val total = if (config.repeat == 0) "∞" else config.repeat.toString()
+            val total = if (activeRepeat == 0) "∞" else activeRepeat.toString()
             val left = if (runEndAt > 0) {
                 val min = ((runEndAt - SystemClock.uptimeMillis()).coerceAtLeast(0) + 59_999) / 60_000
                 "\n남은 ${min / 60}:${"%02d".format(min % 60)}"
@@ -742,15 +749,54 @@ class ClickService : AccessibilityService() {
         running = true
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
-        setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행(과 시작 대기) 중에는 켜 둔다
+        setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행(과 대기) 중에는 켜 둔다
         acquireWakeLock()
-        if (config.startDelaySec > 0) {
+        runBaseAt = SystemClock.uptimeMillis()
+        if (config.sessions.isNotEmpty()) {
+            // 예약 세션 모드: 각 세션 시각에 매크로를 그 횟수만큼 실행 (시작 대기 설정은 무시)
+            sessionIdx = 0
+            waitForSession()
+        } else if (config.startDelaySec > 0) {
             // 시작 대기: 이 동안은 화면을 자유롭게 쓸 수 있고, 시간이 되면 매크로를 시작한다 (■로 취소)
-            startAt = SystemClock.uptimeMillis() + config.startDelaySec * 1000L
+            activeRepeat = config.repeat
+            startAt = runBaseAt + config.startDelaySec * 1000L
             updateInfo()
             scheduleStartCountdown()
         } else {
+            activeRepeat = config.repeat
             beginRun()
+        }
+    }
+
+    /** 다음 예약 세션 시각까지 기다렸다가 매크로를 실행한다. 세션을 모두 마치면 정지. */
+    private fun waitForSession() {
+        removeTouchCatchers() // 대기 중에는 화면을 자유롭게 쓸 수 있게 한다
+        handler.removeCallbacksAndMessages(null)
+        if (sessionIdx >= config.sessions.size) {
+            stop()
+            Toast.makeText(this, "예약 세션을 모두 마쳤습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val s = config.sessions[sessionIdx]
+        activeRepeat = s.repeats
+        startAt = runBaseAt + s.startSec * 1000L
+        if (SystemClock.uptimeMillis() >= startAt) {
+            startAt = 0L
+            beginRun()
+        } else {
+            updateInfo()
+            scheduleStartCountdown()
+        }
+    }
+
+    /** 한 번의 실행(일반 또는 예약 세션 하나)이 끝났을 때. 세션이 남았으면 다음으로, 아니면 정지. */
+    private fun onRunDone(message: String) {
+        if (config.sessions.isNotEmpty()) {
+            sessionIdx++
+            waitForSession()
+        } else {
+            stop()
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -765,6 +811,7 @@ class ClickService : AccessibilityService() {
                 updateInfo()
                 scheduleStartCountdown()
             }
+            Unit
         }, ((startAt - SystemClock.uptimeMillis()) % 1000).let { if (it <= 0) 1000L else it })
     }
 
@@ -797,8 +844,7 @@ class ClickService : AccessibilityService() {
         handler.postDelayed({
             if (!running) return@postDelayed
             if (SystemClock.uptimeMillis() >= runEndAt) {
-                stop()
-                Toast.makeText(this, "설정한 실행 시간이 지나 정지했습니다", Toast.LENGTH_LONG).show()
+                onRunDone("설정한 실행 시간이 지나 정지했습니다")
             } else {
                 updateInfo()
                 scheduleTimeCheck()
@@ -847,6 +893,8 @@ class ClickService : AccessibilityService() {
         releaseWakeLock()
         runEndAt = 0L
         startAt = 0L
+        runBaseAt = 0L
+        sessionIdx = 0
         stoppedAt = SystemClock.uptimeMillis()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEachIndexed { k, m -> m.view.background = markerBackground(false, isScheduled(k)) }
@@ -951,8 +999,7 @@ class ClickService : AccessibilityService() {
             // 기본 순서가 없고 예약 포인트만 있는 경우: 다음 예약 시각까지 기다린다
             val next = timerNext.minOrNull() ?: Long.MAX_VALUE
             if (next == Long.MAX_VALUE) {
-                stop()
-                Toast.makeText(this, "예약 동작을 모두 마쳤습니다", Toast.LENGTH_SHORT).show()
+                onRunDone("예약 동작을 모두 마쳤습니다")
             } else {
                 handler.postDelayed({ dispatchBatch() }, (next - now).coerceIn(16, 1000))
             }
@@ -1021,7 +1068,7 @@ class ClickService : AccessibilityService() {
                     if (index >= mainIdx.size) {
                         index = 0
                         cycle++
-                        if (config.repeat in 1..cycle) {
+                        if (activeRepeat in 1..cycle) {
                             finished = true
                         } else {
                             gap += config.loopDelayMs
@@ -1048,8 +1095,7 @@ class ClickService : AccessibilityService() {
             if (running) {
                 updateInfo()
                 if (finished) {
-                    stop()
-                    Toast.makeText(this@ClickService, "반복 완료", Toast.LENGTH_SHORT).show()
+                    onRunDone("반복 완료")
                 } else {
                     dispatchBatch()
                 }

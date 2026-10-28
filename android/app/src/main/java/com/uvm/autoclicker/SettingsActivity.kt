@@ -26,6 +26,9 @@ class SettingsActivity : Activity() {
     private lateinit var panelBtn: Button
     private lateinit var repeatEdit: EditText
     private lateinit var loopDelayEdit: EditText
+    private lateinit var sessionsBox: LinearLayout
+    private val sessionRows = mutableListOf<Triple<EditText, EditText, EditText>>() // 시, 분, 초
+    private val sessionRepeatEdits = mutableListOf<EditText>()
     private lateinit var startHoursEdit: EditText
     private lateinit var startMinutesEdit: EditText
     private lateinit var startSecondsEdit: EditText
@@ -112,6 +115,12 @@ class SettingsActivity : Activity() {
             }
         })
         root.addView(text("▶을 누르고 이 시간이 지난 뒤 매크로 전체를 시작합니다 (0 = 바로). 기다리는 동안 패널에 남은 시간이 보이고 ■로 취소할 수 있습니다."))
+
+        root.addView(title("예약 세션 (여러 시간에 나눠 실행)"))
+        root.addView(text("▶을 누른 시점 기준으로, 정한 시간마다 매크로 전체를 '횟수'만큼 실행합니다. 예: 3시간 뒤 10회, 5시간 15분 뒤 5회. 한 줄이라도 있으면 위의 '시작 대기'는 무시됩니다."))
+        sessionsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(sessionsBox)
+        root.addView(button("세션 추가") { addSessionRow(0, 0, 0, 1); }) 
         root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
         root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
         limitHoursEdit = numberEdit()
@@ -218,6 +227,10 @@ class SettingsActivity : Activity() {
         config = Store.load(this)
         repeatEdit.setText(config.repeat.toString())
         loopDelayEdit.setText(config.loopDelayMs.toString())
+        sessionsBox.removeAllViews()
+        sessionRows.clear()
+        sessionRepeatEdits.clear()
+        config.sessions.forEach { addSessionRow(it.startSec / 3600, it.startSec / 60 % 60, it.startSec % 60, it.repeats) }
         startHoursEdit.setText((config.startDelaySec / 3600).toString())
         startMinutesEdit.setText((config.startDelaySec / 60 % 60).toString())
         startSecondsEdit.setText((config.startDelaySec % 60).toString())
@@ -303,6 +316,39 @@ class SettingsActivity : Activity() {
     }
 
     /** 입력값을 검증해 저장. 잘못된 값이 있으면 false. */
+    private fun addSessionRow(h: Int, m: Int, s: Int, repeats: Int) {
+        val he = numberEdit().apply { setText(h.toString()) }
+        val me = numberEdit().apply { setText(m.toString()) }
+        val se = numberEdit().apply { setText(s.toString()) }
+        val re = numberEdit().apply { setText(repeats.toString()) }
+        sessionRows.add(Triple(he, me, se))
+        sessionRepeatEdits.add(re)
+        lateinit var row: LinearLayout
+        val del = Button(this).apply {
+            text = "삭제"
+            setOnClickListener {
+                val idx = sessionRows.indexOfFirst { it.first === he }
+                if (idx >= 0) {
+                    sessionRows.removeAt(idx); sessionRepeatEdits.removeAt(idx)
+                }
+                sessionsBox.removeView(row)
+            }
+        }
+        row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            listOf(he to "시", me to "분", se to "초").forEach { (e, u) ->
+                addView(e, LinearLayout.LayoutParams(dp(42), LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(TextView(this@SettingsActivity).apply { text = u })
+            }
+            addView(TextView(this@SettingsActivity).apply { text = "  " })
+            addView(re, LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(TextView(this@SettingsActivity).apply { text = "회 " })
+            addView(del)
+        }
+        sessionsBox.addView(row)
+    }
+
     private fun save(): Boolean {
         val repeat = repeatEdit.text.toString().toIntOrNull()
         val loopDelay = loopDelayEdit.text.toString().toLongOrNull()
@@ -346,6 +392,21 @@ class SettingsActivity : Activity() {
         latest.loopDelayMs = loopDelay
         latest.maxRunMinutes = limitHours * 60 + limitMinutes
         latest.startDelaySec = startH * 3600 + startM * 60 + startS
+        val newSessions = mutableListOf<RunSession>()
+        for (i in sessionRows.indices) {
+            val (h, m, sec) = sessionRows[i]
+            val hv = h.text.toString().ifBlank { "0" }.toIntOrNull()
+            val mv = m.text.toString().ifBlank { "0" }.toIntOrNull()
+            val sv = sec.text.toString().ifBlank { "0" }.toIntOrNull()
+            val rep = sessionRepeatEdits[i].text.toString().ifBlank { "1" }.toIntOrNull()
+            if (hv == null || mv == null || sv == null || rep == null || hv < 0 || mv < 0 || sv < 0 || rep < 1) {
+                Toast.makeText(this, "예약 세션: 시간은 0 이상, 횟수는 1 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
+                return false
+            }
+            newSessions.add(RunSession(hv * 3600 + mv * 60 + sv, rep))
+        }
+        newSessions.sortBy { it.startSec }
+        latest.sessions = newSessions
         latest.defaultDelayMs = defaultDelay
         latest.stopOnTouch = stopOnTouchCheck.isChecked
         latest.tapDurationMs = tapDuration

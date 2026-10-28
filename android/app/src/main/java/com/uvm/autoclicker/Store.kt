@@ -19,6 +19,9 @@ enum class Action(val label: String, val arrow: String) {
     SWIPE_RIGHT("오른쪽으로 밀기", "→"),
 }
 
+/** 예약 세션: ▶을 누르고 startSec초 뒤에 매크로 전체를 repeats번 반복 실행 */
+data class RunSession(var startSec: Int = 0, var repeats: Int = 1)
+
 const val DEFAULT_SWIPE_DP = 300
 const val DEFAULT_SWIPE_MS = 400L
 
@@ -64,8 +67,10 @@ data class Config(
     var panelHorizontal: Boolean = false,
     /** 마지막으로 저장하거나 불러온 매크로 이름 (없으면 빈 문자열) */
     var currentMacro: String = "",
-    /** ▶을 누르고 실제로 시작하기까지 기다리는 시간(초). 0 = 바로 시작 */
+    /** ▶을 누르고 실제로 시작하기까지 기다리는 시간(초). 0 = 바로 시작. (예약 세션이 있으면 무시) */
     var startDelaySec: Int = 0,
+    /** 예약 세션 목록. 비어 있지 않으면 ▶을 누른 시점 기준으로 각 세션 시각에 매크로를 반복 실행 */
+    var sessions: MutableList<RunSession> = mutableListOf(),
 )
 
 object Store {
@@ -126,6 +131,7 @@ object Store {
         cfg.maxRunMinutes = m.maxRunMinutes
         cfg.tapDurationMs = m.tapDurationMs
         cfg.startDelaySec = m.startDelaySec
+        cfg.sessions = m.sessions.map { it.copy() }.toMutableList()
         cfg.currentMacro = name
         return true
     }
@@ -161,6 +167,13 @@ object Store {
             o.optBoolean("panelHorizontal", false),
             o.optString("currentMacro", ""),
             o.optInt("startDelaySec", 0).coerceAtLeast(0),
+            run {
+                val a = o.optJSONArray("sessions") ?: JSONArray()
+                MutableList(a.length()) { i ->
+                    val so = a.getJSONObject(i)
+                    RunSession(so.optInt("startSec", 0).coerceAtLeast(0), so.optInt("repeats", 1).coerceAtLeast(1))
+                }
+            },
         )
     }
 
@@ -186,5 +199,8 @@ object Store {
             .put("panelHorizontal", cfg.panelHorizontal)
             .put("currentMacro", cfg.currentMacro)
             .put("startDelaySec", cfg.startDelaySec)
+            .put("sessions", JSONArray().apply {
+                cfg.sessions.forEach { put(JSONObject().put("startSec", it.startSec).put("repeats", it.repeats)) }
+            })
     }
 }
