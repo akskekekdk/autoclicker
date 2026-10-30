@@ -89,6 +89,7 @@ class SettingsActivity : Activity() {
                 "  빨간 원 탭: 동작(터치/위·아래·좌·우로 밀기), 대기 시간(ms), 반복 횟수, 실행 확률(%), 예약 실행 설정\n" +
                 "  파란 원 = 예약 포인트: 정한 시간에 끼어들어 실행 (⏰ 첫 실행 시각, ↻ 반복)\n" +
                 "  － 마지막 위치 삭제\n" +
+                "  ⏰ 예약 실행 설정 (설정 화면 없이 바로)\n" +
                 "  💾 매크로 저장 / 불러오기 (길게 누르면 삭제)\n" +
                 "  ⚙ 이 설정 화면 열기\n" +
                 "  ⇄ / ⇅ 패널을 가로 / 세로로 바꾸기\n" +
@@ -124,7 +125,7 @@ class SettingsActivity : Activity() {
         root.addView(button("세션 추가") { addSessionRow(0, 0, 0, 1); })
         keepAliveEdit = numberEdit()
         root.addView(row("대기 중 유지 탭 간격 (초, 0 = 끔)", keepAliveEdit))
-        root.addView(text("예약/시작 대기 동안 이 간격마다 1번 포인트를 한 번 눌러 게임이 끊기는 것을 막습니다. 1번 포인트는 눌러도 안전한 빈 곳에 두세요."))
+        root.addView(text("예약/시작 대기 동안 이 간격마다 1번 포인트를 한 번 눌러 게임이 끊기는 것을 막습니다. 1번 포인트는 눌러도 안전한 빈 곳에 두세요. (모든 매크로 공통 · 패널 ⏰에서도 설정 가능)"))
         root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
         root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
         limitHoursEdit = numberEdit()

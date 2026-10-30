@@ -134,7 +134,7 @@ object Store {
         cfg.tapDurationMs = m.tapDurationMs
         cfg.startDelaySec = m.startDelaySec
         cfg.sessions = m.sessions.map { it.copy() }.toMutableList()
-        cfg.keepAliveSec = m.keepAliveSec
+        // keepAliveSec(유지 탭 간격)은 앱 전체 설정이라 매크로를 불러와도 그대로 둔다
         cfg.currentMacro = name
         return true
     }

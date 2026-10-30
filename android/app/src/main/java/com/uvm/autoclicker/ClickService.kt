@@ -261,6 +261,7 @@ class ClickService : AccessibilityService() {
             playBtn,
             panelButton("＋", "추가") { addPoint() },
             panelButton("－", "삭제") { removeLastPoint() },
+            panelButton("⏰", "예약") { showScheduleDialog() },
             panelButton("💾", "매크로") { showMacroDialog() },
             panelButton("⚙", "설정") { openSettings() },
             orientBtn,
@@ -629,6 +630,98 @@ class ClickService : AccessibilityService() {
         builder.create().apply { window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) }
 
     private val dialogTheme get() = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+
+    /** 패널에서 바로 예약 세션과 유지 탭을 편집한다 (설정 화면 없이). */
+    private fun showScheduleDialog() {
+        if (running) return
+        val theme = dialogTheme
+        fun numberInput(value: Int, width: Int) = EditText(theme).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(value.toString())
+            layoutParams = LinearLayout.LayoutParams(dp(width), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        fun small(t: String) = TextView(theme).apply { text = t }
+
+        val rowsBox = LinearLayout(theme).apply { orientation = LinearLayout.VERTICAL }
+        // 각 세션 행의 입력칸을 들고 있다가 저장할 때 읽는다
+        data class Row(val view: View, val h: EditText, val m: EditText, val s: EditText, val rep: EditText)
+        val rows = mutableListOf<Row>()
+        fun addRow(startSec: Int, repeats: Int) {
+            val h = numberInput(startSec / 3600, 40)
+            val m = numberInput(startSec / 60 % 60, 40)
+            val s = numberInput(startSec % 60, 40)
+            val rep = numberInput(repeats, 44)
+            lateinit var row: LinearLayout
+            val del = TextView(theme).apply {
+                text = "  ✕"
+                setOnClickListener { rowsBox.removeView(row); rows.removeAll { it.view === row } }
+            }
+            row = LinearLayout(theme).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(h); addView(small("시")); addView(m); addView(small("분")); addView(s); addView(small("초 "))
+                addView(rep); addView(small("회")); addView(del)
+            }
+            rows.add(Row(row, h, m, s, rep))
+            rowsBox.addView(row)
+        }
+        config.sessions.forEach { addRow(it.startSec, it.repeats) }
+
+        val keepAlive = numberInput(config.keepAliveSec, 56)
+        val addBtn = TextView(theme).apply {
+            text = "＋ 세션 추가"
+            setPadding(0, dp(8), 0, dp(8))
+            setOnClickListener { addRow(0, 0) }
+        }
+        val box = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(8), dp(18), 0)
+            addView(small("▶을 누른 시점 기준으로, 정한 시간에 매크로를 '횟수'만큼 실행합니다.\n세션이 없으면 바로 실행됩니다."))
+            addView(rowsBox)
+            addView(addBtn)
+            addView(small("대기 중 유지 탭 간격 (초, 0=끔). 대기 동안 1번 포인트를 눌러 게임이 끊기는 것을 막습니다. (모든 매크로 공통)"))
+            addView(LinearLayout(theme).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(keepAlive); addView(small(" 초"))
+            })
+        }
+        val dialog = overlayDialog(
+            AlertDialog.Builder(theme)
+                .setTitle("예약 실행")
+                .setView(ScrollView(theme).apply { addView(box) })
+                .setPositiveButton("저장") { _, _ ->
+                    val newSessions = mutableListOf<RunSession>()
+                    for (r in rows) {
+                        val hv = r.h.text.toString().ifBlank { "0" }.toIntOrNull()
+                        val mv = r.m.text.toString().ifBlank { "0" }.toIntOrNull()
+                        val sv = r.s.text.toString().ifBlank { "0" }.toIntOrNull()
+                        val rp = r.rep.text.toString().ifBlank { "1" }.toIntOrNull()
+                        if (hv == null || mv == null || sv == null || rp == null || hv < 0 || mv < 0 || sv < 0 || rp < 1) {
+                            Toast.makeText(this, "시간은 0 이상, 횟수는 1 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
+                            return@setPositiveButton
+                        }
+                        newSessions.add(RunSession(hv * 3600 + mv * 60 + sv, rp))
+                    }
+                    newSessions.sortBy { it.startSec }
+                    val ka = keepAlive.text.toString().ifBlank { "0" }.toIntOrNull()
+                    if (ka == null || ka < 0) {
+                        Toast.makeText(this, "유지 탭 간격은 0 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
+                        return@setPositiveButton
+                    }
+                    config.sessions = newSessions
+                    config.keepAliveSec = ka
+                    Store.save(this, config)
+                    rebuildMarkers()
+                    val msg = if (newSessions.isEmpty()) "예약을 비웠습니다 (바로 실행)"
+                    else "예약 ${newSessions.size}개 저장 — ▶로 시작"
+                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("닫기", null)
+        )
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
+        dialog.show()
+    }
 
     /** 저장된 매크로 목록: 누르면 불러오기, 길게 누르면 삭제, 아래 버튼으로 현재 상태 저장. */
     private fun showMacroDialog() {
