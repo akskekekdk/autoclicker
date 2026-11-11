@@ -47,6 +47,13 @@ data class ClickPoint(
     var startSec: Int = 0,
     var intervalSec: Int = 0,
     var durationSec: Int = 0,
+    /**
+     * 그룹 묶기: groupSize>1이면 이 포인트부터 groupSize개를 한 묶음으로 본다.
+     * 묶음은 이 포인트의 확률(chance)로 실행 여부를 정하고, 실행되면 전체를 groupRepeat번 반복한다.
+     * 묶음에 속한 뒤 포인트들은 개별 차례에서 실행되지 않는다.
+     */
+    var groupSize: Int = 1,
+    var groupRepeat: Int = 1,
 )
 
 data class Config(
@@ -157,6 +164,8 @@ object Store {
                 p.optInt("startSec", 0).coerceAtLeast(0),
                 p.optInt("intervalSec", 0).coerceAtLeast(0),
                 p.optInt("durationSec", 0).coerceAtLeast(0),
+                p.optInt("groupSize", 1).coerceAtLeast(1),
+                p.optInt("groupRepeat", 1).coerceAtLeast(1),
             )
         }
         return Config(
@@ -190,6 +199,7 @@ object Store {
                     .put("chance", it.chance)
                     .put("scheduled", it.scheduled).put("startSec", it.startSec)
                     .put("intervalSec", it.intervalSec).put("durationSec", it.durationSec)
+                    .put("groupSize", it.groupSize).put("groupRepeat", it.groupRepeat)
             )
         }
         return JSONObject()

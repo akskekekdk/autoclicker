@@ -112,6 +112,8 @@ class ClickService : AccessibilityService() {
     private var wakeLock: PowerManager.WakeLock? = null
     /** 현재 포인트를 이번 바퀴에서 몇 번 터치했는지 */
     private var tapRepeat = 0
+    /** 이번 바퀴에 실행할 포인트 목록: (포인트번호, 실제 터치할지). 그룹·확률이 반영되어 있다. */
+    private var cycleSteps: List<Pair<Int, Boolean>> = emptyList()
     private var cycle = 0
 
     private val markerPx by lazy { dp(MARKER_DP) }
@@ -357,6 +359,13 @@ class ClickService : AccessibilityService() {
 
     /** 마커 글자: 큰 번호 + 작은 대기시간(ms), 여러 번 터치하면 "×횟수". */
     private fun markerText(number: Int, point: ClickPoint): SpannableString {
+        if (point.groupSize > 1) {
+            val rep = if (point.groupRepeat > 1) "×${point.groupRepeat}" else ""
+            val ch = if (point.chance < 100) " ${point.chance}%" else ""
+            return SpannableString("$number\n⊏${point.groupSize}$rep$ch").apply {
+                setSpan(RelativeSizeSpan(0.5f), number.toString().length + 1, length, 0)
+            }
+        }
         if (point.scheduled) {
             // 예약 포인트: 첫 실행 시각과 반복 여부(↻)를 표시
             val repeat = if (point.intervalSec > 0) "↻" else ""
@@ -417,6 +426,8 @@ class ClickService : AccessibilityService() {
         val swipeDistInput = numberInput(point.swipeDp)
         val swipeMsInput = numberInput(point.swipeMs)
         val chanceInput = numberInput(point.chance)
+        val groupSizeInput = numberInput(point.groupSize)
+        val groupRepeatInput = numberInput(point.groupRepeat)
         // 시/분/초 입력 한 줄
         fun hmsRow(totalSec: Int): Pair<LinearLayout, () -> Int?> {
             val h = numberInput(totalSec / 3600)
@@ -488,6 +499,35 @@ class ClickService : AccessibilityService() {
             addView(label("실행 확률 (%, 100 = 항상)"))
             addView(chanceInput)
         }
+        val groupBox = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label("그룹 묶을 포인트 수 (이 포인트부터, 1 = 묶지 않음)"))
+            addView(groupSizeInput)
+            addView(label("묶음 반복 횟수 (묶음 전체를 몇 번 실행)"))
+            addView(groupRepeatInput)
+            addView(label("묶었을 때 위 '실행 확률'은 묶음 전체의 실행 확률이 되고, 통과하면 묶음 안 포인트를 끝까지 실행합니다."))
+        }
+        val advancedBox = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(groupBox)
+            addView(scheduledCheck)
+            addView(scheduleBox)
+        }
+        val advancedToggle = TextView(theme).apply {
+            text = "고급 설정 (그룹·예약) ▾"
+            setPadding(0, dp(12), 0, dp(4))
+            setOnClickListener {
+                val show = advancedBox.visibility != View.VISIBLE
+                advancedBox.visibility = if (show) View.VISIBLE else View.GONE
+                text = if (show) "고급 설정 (그룹·예약) ▴" else "고급 설정 (그룹·예약) ▾"
+            }
+        }
+        // 그룹이나 예약이 이미 설정돼 있으면 고급 설정을 펼친 상태로 연다
+        if (point.groupSize > 1 || point.scheduled) {
+            advancedBox.visibility = View.VISIBLE
+            advancedToggle.text = "고급 설정 (그룹·예약) ▴"
+        }
         val box = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), 0)
@@ -495,8 +535,8 @@ class ClickService : AccessibilityService() {
             addView(actionGroup)
             addView(swipeBox)
             addView(normalBox)
-            addView(scheduledCheck)
-            addView(scheduleBox)
+            addView(advancedToggle)
+            addView(advancedBox)
         }
 
         val scroll = ScrollView(theme).apply { addView(box) }
@@ -528,7 +568,13 @@ class ClickService : AccessibilityService() {
                         this, "대기 0 이상, 횟수 1 이상, 밀기 거리 10 이상, 밀기 시간 50 이상, 확률 0~100으로 입력하세요",
                         Toast.LENGTH_LONG,
                     ).show()
+                } else if (groupSizeInput.text.toString().toIntOrNull().let { it == null || it < 1 } ||
+                    groupRepeatInput.text.toString().toIntOrNull().let { it == null || it < 1 }
+                ) {
+                    Toast.makeText(this, "그룹 수와 묶음 반복은 1 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
                 } else {
+                    point.groupSize = groupSizeInput.text.toString().toInt()
+                    point.groupRepeat = groupRepeatInput.text.toString().toInt()
                     point.action = selectedAction()
                     point.swipeDp = dist
                     point.swipeMs = swipeMs
@@ -944,6 +990,7 @@ class ClickService : AccessibilityService() {
         tapRepeat = 0
         cycle = 0
         mainIdx = config.points.indices.filter { !config.points[it].scheduled }
+        cycleSteps = buildCycleSteps()
         initTimers(SystemClock.uptimeMillis())
         // 실행 중에는 마커가 움직이지 않으므로 터치 좌표를 한 번만 계산한다 (상태바/노치 오프셋 보정)
         targets = markers.map { m ->
@@ -1119,6 +1166,31 @@ class ClickService : AccessibilityService() {
     }
 
     /**
+     * 이번 바퀴에 실행할 포인트들을 그룹·확률을 반영해 펼친다.
+     * 그룹 머리는 확률로 실행 여부를 정하고, 실행되면 묶음 전체를 groupRepeat번 반복한다.
+     * 일반 포인트는 확률로 터치 여부를 정하되 시간은 그대로 흐르도록 목록에는 남긴다.
+     */
+    private fun buildCycleSteps(): List<Pair<Int, Boolean>> {
+        val out = mutableListOf<Pair<Int, Boolean>>()
+        var i = 0
+        while (i < mainIdx.size) {
+            val headPi = mainIdx[i]
+            val head = config.points[headPi]
+            val size = head.groupSize.coerceAtLeast(1)
+            if (size > 1) {
+                val block = (i until minOf(i + size, mainIdx.size)).map { mainIdx[it] }
+                val run = head.chance >= 100 || Random.nextInt(100) < head.chance
+                if (run) repeat(head.groupRepeat.coerceAtLeast(1)) { block.forEach { out.add(it to true) } }
+                i += block.size
+            } else {
+                out.add(headPi to (head.chance >= 100 || Random.nextInt(100) < head.chance))
+                i++
+            }
+        }
+        return out
+    }
+
+    /**
      * 다음 동작 여러 개를 하나의 제스처로 묶어 보낸다. 터치마다 따로 보내면 생기는
      * 지연이 사라져 연타가 빨라진다. 정지가 늦어지지 않도록 묶음 길이는 BATCH_WINDOW_MS로 제한한다.
      * 예약 포인트는 차례가 되면 기본 순서 사이에 끼어들어 실행된다.
@@ -1149,8 +1221,17 @@ class ClickService : AccessibilityService() {
         while (strokes < maxStrokes && (steps == 0 || t <= BATCH_WINDOW_MS)) {
             // 예약 포인트만 있는 매크로에서 예약 실행이 끝나면 묶음을 마친다
             if (activeTimed < 0 && mainIdx.isEmpty()) break
+            // 이번 바퀴에 실행할 게 하나도 없으면(그룹이 모두 건너뜀 등) 바퀴만 넘긴다
+            if (activeTimed < 0 && cycleSteps.isEmpty()) {
+                cycle++
+                if (activeRepeat in 1..cycle) { finished = true; break }
+                cycleSteps = buildCycleSteps()
+                t += config.loopDelayMs
+                if (cycleSteps.isEmpty()) { t += 200L; break }
+                continue
+            }
             val timed = activeTimed >= 0
-            val pi = if (timed) activeTimed else mainIdx[index]
+            val pi = if (timed) activeTimed else cycleSteps[index].first
             val p = targets[pi]
             val point = config.points[pi]
             val path = Path().apply { moveTo(p[0], p[1]) }
@@ -1172,8 +1253,10 @@ class ClickService : AccessibilityService() {
                 )
                 point.swipeMs
             }
-            // 확률에 따라 이번 동작을 실제로 할지 정한다. 건너뛰어도 시간은 그대로 흐른다.
-            if (point.chance >= 100 || Random.nextInt(100) < point.chance) {
+            // 예약 포인트는 자기 확률로, 기본 순서는 이미 정해진 값(cycleSteps)으로 터치 여부를 정한다.
+            val doTap = if (timed) point.chance >= 100 || Random.nextInt(100) < point.chance
+                        else cycleSteps[index].second
+            if (doTap) {
                 builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
                 highlights.add(t to pi)
                 strokes++
@@ -1197,13 +1280,14 @@ class ClickService : AccessibilityService() {
                 if (tapRepeat >= point.taps) {
                     tapRepeat = 0
                     index++
-                    if (index >= mainIdx.size) {
+                    if (index >= cycleSteps.size) {
                         index = 0
                         cycle++
                         if (activeRepeat in 1..cycle) {
                             finished = true
                         } else {
                             gap += config.loopDelayMs
+                            cycleSteps = buildCycleSteps()
                         }
                     }
                 }
