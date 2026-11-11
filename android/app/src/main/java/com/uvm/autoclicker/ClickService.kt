@@ -16,6 +16,7 @@ import android.os.SystemClock
 import android.text.InputType
 import android.text.SpannableString
 import android.text.style.RelativeSizeSpan
+import android.view.inputmethod.EditorInfo
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.MotionEvent
@@ -358,32 +359,50 @@ class ClickService : AccessibilityService() {
         else "%d:%02d".format(sec / 60, sec % 60)
 
     /** 마커 글자: 큰 번호 + 작은 대기시간(ms), 여러 번 터치하면 "×횟수". */
-    private fun markerText(number: Int, point: ClickPoint): SpannableString {
+    /** 마커에 표시할 번호 문자열. 그룹이면 머리 번호 기준 H-1, H-2 … 로 묶는다. */
+    private fun markerLabels(): List<String> {
+        val labels = MutableList(config.points.size) { (it + 1).toString() }
+        var i = 0
+        while (i < config.points.size) {
+            val size = config.points[i].groupSize.coerceAtLeast(1)
+            if (size > 1) {
+                val head = i + 1
+                val end = minOf(i + size, config.points.size)
+                for (k in i until end) labels[k] = "$head-${k - i + 1}"
+                i = end
+            } else {
+                i++
+            }
+        }
+        return labels
+    }
+
+    private fun markerText(label: String, point: ClickPoint): SpannableString {
+        val n = label.length + 1
         if (point.groupSize > 1) {
             val rep = if (point.groupRepeat > 1) "×${point.groupRepeat}" else ""
             val ch = if (point.chance < 100) " ${point.chance}%" else ""
-            return SpannableString("$number\n⊏${point.groupSize}$rep$ch").apply {
-                setSpan(RelativeSizeSpan(0.5f), number.toString().length + 1, length, 0)
+            return SpannableString("$label\n⊏${point.groupSize}$rep$ch").apply {
+                setSpan(RelativeSizeSpan(0.5f), n, length, 0)
             }
         }
         if (point.scheduled) {
-            // 예약 포인트: 첫 실행 시각과 반복 여부(↻)를 표시
             val repeat = if (point.intervalSec > 0) "↻" else ""
-            return SpannableString("$number\n⏰${formatSec(point.startSec)}$repeat").apply {
-                setSpan(RelativeSizeSpan(0.55f), number.toString().length + 1, length, 0)
+            return SpannableString("$label\n⏰${formatSec(point.startSec)}$repeat").apply {
+                setSpan(RelativeSizeSpan(0.55f), n, length, 0)
             }
         }
         val base = if (point.action == Action.TAP) "${point.delayMs}" else "${point.action.arrow}${point.delayMs}"
         val withTaps = if (point.taps > 1) "$base×${point.taps}" else base
         val detail = if (point.chance < 100) "$withTaps\n${point.chance}%" else withTaps
-        return SpannableString("$number\n$detail").apply {
-            setSpan(RelativeSizeSpan(0.55f), number.toString().length + 1, length, 0)
+        return SpannableString("$label\n$detail").apply {
+            setSpan(RelativeSizeSpan(0.55f), n, length, 0)
         }
     }
 
-    private fun createMarker(number: Int, point: ClickPoint): Marker {
+    private fun createMarker(index: Int, label: String, point: ClickPoint): Marker {
         val view = TextView(this).apply {
-            text = markerText(number, point)
+            text = markerText(label, point)
             textSize = 15f
             setLineSpacing(0f, 0.85f)
             gravity = Gravity.CENTER
@@ -398,7 +417,7 @@ class ClickService : AccessibilityService() {
         val marker = Marker(view, params)
         makeDraggable(
             view, view, params,
-            onTap = { editPoint(number - 1) },
+            onTap = { editPoint(index) },
             onDragEnd = { savePositions() },
         )
         wm.addView(view, params)
@@ -414,6 +433,7 @@ class ClickService : AccessibilityService() {
         val theme = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
         fun numberInput(value: Number) = EditText(theme).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
+            imeOptions = EditorInfo.IME_ACTION_DONE // 키보드에 '완료'가 떠서 다음다음 누를 필요 없음
             setText(value.toString())
             setSelectAllOnFocus(true)
         }
@@ -539,12 +559,19 @@ class ClickService : AccessibilityService() {
             addView(advancedBox)
         }
 
+        // 입력칸 바깥을 누르면 키보드를 닫아 '저장' 버튼이 보이게 한다
+        box.isFocusableInTouchMode = true
+        box.setOnClickListener {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(box.windowToken, 0)
+            box.requestFocus()
+        }
         val scroll = ScrollView(theme).apply { addView(box) }
         val apply = { delay: Long, taps: Int ->
             point.delayMs = delay
             point.taps = taps
             Store.save(this, config)
-            markers.getOrNull(index)?.view?.text = markerText(index + 1, point)
+            rebuildMarkers() // 그룹을 바꾸면 이웃 번호도 바뀌므로 전체를 다시 그린다
         }
         val dialog = AlertDialog.Builder(theme)
             .setTitle("${index + 1}번 포인트")
@@ -583,7 +610,6 @@ class ClickService : AccessibilityService() {
                     point.startSec = startSec
                     point.intervalSec = intervalSec
                     point.durationSec = durationSec
-                    markers.getOrNull(index)?.view?.background = markerBackground(false, point.scheduled)
                     apply(delay, taps)
                 }
             }
@@ -593,6 +619,7 @@ class ClickService : AccessibilityService() {
             .setNegativeButton("취소", null)
             .create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         dialog.show()
     }
 
@@ -603,7 +630,8 @@ class ClickService : AccessibilityService() {
 
     private fun rebuildMarkers() {
         removeMarkers()
-        config.points.forEachIndexed { i, p -> markers.add(createMarker(i + 1, p)) }
+        val labels = markerLabels()
+        config.points.forEachIndexed { i, p -> markers.add(createMarker(i, labels[i], p)) }
         applyMarkerVisibility()
         updateInfo()
     }
