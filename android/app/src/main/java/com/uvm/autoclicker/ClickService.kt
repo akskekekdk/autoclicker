@@ -741,6 +741,7 @@ class ClickService : AccessibilityService() {
         }
         config.sessions.forEach { addRow(it.startSec, it.repeats) }
 
+        val repeatInput = numberInput(config.repeat, 56)
         val keepAlive = numberInput(config.keepAliveSec, 56)
         val addBtn = TextView(theme).apply {
             text = "＋ 세션 추가"
@@ -750,7 +751,13 @@ class ClickService : AccessibilityService() {
         val box = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(8), dp(18), 0)
-            addView(small("▶을 누른 시점 기준으로, 정한 시간에 매크로를 '횟수'만큼 실행합니다.\n세션이 없으면 바로 실행됩니다."))
+            addView(small("전체 반복 횟수 (0 = 무한). 매크로 한 바퀴를 몇 번 반복할지."))
+            addView(LinearLayout(theme).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(repeatInput); addView(small(" 회"))
+            })
+            addView(small("\n예약 세션 (여러 시간에 나눠 실행) — ▶을 누른 시점 기준으로 정한 시간에 매크로를 '횟수'만큼 실행합니다. 세션이 없으면 바로 실행됩니다."))
             addView(rowsBox)
             addView(addBtn)
             addView(small("대기 중 유지 탭 간격 (초, 0=끔). 대기 동안 1번 포인트를 눌러 게임이 끊기는 것을 막습니다. (모든 매크로 공통)"))
@@ -783,6 +790,12 @@ class ClickService : AccessibilityService() {
                         Toast.makeText(this, "유지 탭 간격은 0 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
                         return@setPositiveButton
                     }
+                    val rp = repeatInput.text.toString().ifBlank { "0" }.toIntOrNull()
+                    if (rp == null || rp < 0) {
+                        Toast.makeText(this, "전체 반복 횟수는 0 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
+                        return@setPositiveButton
+                    }
+                    config.repeat = rp
                     config.sessions = newSessions
                     config.keepAliveSec = ka
                     Store.save(this, config)
