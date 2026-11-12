@@ -1338,8 +1338,18 @@ class ClickService : AccessibilityService() {
             // 포인트를 2개 이상 묶었거나(size>1), 한 포인트라도 묶음 반복이 2 이상이면 묶음으로 본다
             if (size > 1 || groupRep > 1) {
                 val block = (i until minOf(i + size, mainIdx.size)).map { mainIdx[it] }
+                // 머리의 확률은 묶음 전체의 실행 여부를 정한다. 통과하면 묶음을 groupRep번 반복하되
+                // 묶음 안 각 포인트는 자기 확률로 터치 여부를 따로 정한다 (머리는 항상 터치).
                 val run = head.chance >= 100 || Random.nextInt(100) < head.chance
-                if (run) repeat(groupRep) { block.forEach { out.add(it to true) } }
+                if (run) repeat(groupRep) {
+                    block.forEachIndexed { k, pi ->
+                        val doTap = if (k == 0) true else {
+                            val c = config.points[pi].chance
+                            c >= 100 || Random.nextInt(100) < c
+                        }
+                        out.add(pi to doTap)
+                    }
+                }
                 i += block.size
             } else {
                 out.add(headPi to (head.chance >= 100 || Random.nextInt(100) < head.chance))
