@@ -1125,11 +1125,9 @@ class ClickService : AccessibilityService() {
         cycleSteps = buildCycleSteps()
         initTimers(SystemClock.uptimeMillis())
         // 실행 중에는 마커가 움직이지 않으므로 터치 좌표를 한 번만 계산한다 (상태바/노치 오프셋 보정)
-        targets = markers.map { m ->
-            val loc = IntArray(2)
-            m.view.getLocationOnScreen(loc)
-            floatArrayOf((loc[0] + m.view.width / 2).toFloat(), (loc[1] + m.view.height / 2).toFloat())
-        }
+        // 마커 뷰가 아직 배치되지 않았을 수 있으므로(종료 매크로처럼 방금 그린 경우) 저장된 좌표를 바로 쓴다.
+        // 마커 중심 = 포인트 좌표(화면 좌표)이므로 그대로 터치 지점이 된다.
+        targets = config.points.map { floatArrayOf(it.x.toFloat(), it.y.toFloat()) }
         if (config.stopMode != StopMode.BUTTON_ONLY) addTouchCatchers()
         runEndAt = if (config.maxRunMinutes > 0) {
             SystemClock.uptimeMillis() + config.maxRunMinutes * 60_000L
