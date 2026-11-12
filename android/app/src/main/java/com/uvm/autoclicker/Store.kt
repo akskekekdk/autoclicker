@@ -61,6 +61,8 @@ data class ClickPoint(
      */
     var groupSize: Int = 1,
     var groupRepeat: Int = 1,
+    /** 종결 동작: 전체 반복이 끝난 뒤 한 번만, 종결 포인트끼리 순서대로 실행 */
+    var ending: Boolean = false,
 )
 
 data class Config(
@@ -176,6 +178,7 @@ object Store {
                 p.optInt("durationSec", 0).coerceAtLeast(0),
                 p.optInt("groupSize", 1).coerceAtLeast(1),
                 p.optInt("groupRepeat", 1).coerceAtLeast(1),
+                p.optBoolean("ending", false),
             )
         }
         return Config(
@@ -216,6 +219,7 @@ object Store {
                     .put("scheduled", it.scheduled).put("startSec", it.startSec)
                     .put("intervalSec", it.intervalSec).put("durationSec", it.durationSec)
                     .put("groupSize", it.groupSize).put("groupRepeat", it.groupRepeat)
+                    .put("ending", it.ending)
             )
         }
         return JSONObject()

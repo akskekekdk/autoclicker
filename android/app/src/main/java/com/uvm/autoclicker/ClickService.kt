@@ -121,6 +121,10 @@ class ClickService : AccessibilityService() {
     private var tapRepeat = 0
     /** 이번 바퀴에 실행할 포인트 목록: (포인트번호, 실제 터치할지). 그룹·확률이 반영되어 있다. */
     private var cycleSteps: List<Pair<Int, Boolean>> = emptyList()
+    /** 종결 포인트 번호들 */
+    private var endingIdx: List<Int> = emptyList()
+    /** 지금 종결 패스(전체 반복 뒤 종결 포인트 실행)를 하는 중인가 */
+    private var endingPass = false
     private var cycle = 0
 
     private val markerPx by lazy { dp(MARKER_DP) }
@@ -349,12 +353,12 @@ class ClickService : AccessibilityService() {
     }
 
     /** 마커 색: 실행 중인 것은 초록, 예약 포인트는 파랑, 나머지는 빨강 */
-    private fun markerBackground(active: Boolean, scheduled: Boolean = false) = GradientDrawable().apply {
+    private fun markerBackground(active: Boolean, scheduled: Boolean = false, ending: Boolean = false) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(
             when {
                 active -> Color.parseColor("#AA00C853")
-                endPhase -> Color.parseColor("#CC000000") // 종료 매크로 실행 중에는 검정
+                ending || endPhase -> Color.parseColor("#CC000000") // 종결 동작/종료 매크로는 검정
                 scheduled -> Color.parseColor("#882962FF")
                 else -> Color.parseColor("#88E53935")
             }
@@ -385,6 +389,8 @@ class ClickService : AccessibilityService() {
                 i++
             }
         }
+        var ec = 0
+        config.points.forEachIndexed { i, p -> if (p.ending) { ec++; labels[i] = "종$ec" } }
         return labels
     }
 
@@ -419,7 +425,7 @@ class ClickService : AccessibilityService() {
             setLineSpacing(0f, 0.85f)
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            background = markerBackground(false, point.scheduled)
+            background = markerBackground(false, point.scheduled, point.ending)
             layoutParams = android.view.ViewGroup.LayoutParams(markerPx, markerPx)
         }
         val params = overlayParams(point.x - markerPx / 2, point.y - markerPx / 2).apply {
@@ -495,6 +501,10 @@ class ClickService : AccessibilityService() {
             addView(durationRow)
             visibility = if (point.scheduled) View.VISIBLE else View.GONE
         }
+        val endingCheck = CheckBox(theme).apply {
+            text = "종결 동작 (기본 순서에서 빠지고, 전체 반복이 끝난 뒤 종결끼리 순서대로 1회 실행 · 검정 원)"
+            isChecked = point.ending
+        }
         val scheduledCheck = CheckBox(theme).apply {
             text = "예약 실행 (기본 순서에서 빠지고, 정한 시간에 끼어들어 위 설정대로 실행)"
             isChecked = point.scheduled
@@ -543,6 +553,7 @@ class ClickService : AccessibilityService() {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
             addView(groupBox)
+            addView(endingCheck)
             addView(scheduledCheck)
             addView(scheduleBox)
         }
@@ -556,7 +567,7 @@ class ClickService : AccessibilityService() {
             }
         }
         // 그룹이나 예약이 이미 설정돼 있으면 고급 설정을 펼친 상태로 연다
-        if (point.groupSize > 1 || point.groupRepeat > 1 || point.scheduled) {
+        if (point.groupSize > 1 || point.groupRepeat > 1 || point.scheduled || point.ending) {
             advancedBox.visibility = View.VISIBLE
             advancedToggle.text = "고급 설정 (그룹·예약) ▴"
         }
@@ -618,6 +629,7 @@ class ClickService : AccessibilityService() {
                     point.swipeDp = dist
                     point.swipeMs = swipeMs
                     point.chance = chance
+                    point.ending = endingCheck.isChecked
                     point.scheduled = scheduledCheck.isChecked
                     point.startSec = startSec
                     point.intervalSec = intervalSec
@@ -1164,7 +1176,9 @@ class ClickService : AccessibilityService() {
         index = 0
         tapRepeat = 0
         cycle = 0
-        mainIdx = config.points.indices.filter { !config.points[it].scheduled }
+        mainIdx = config.points.indices.filter { !config.points[it].scheduled && !config.points[it].ending }
+        endingIdx = config.points.indices.filter { config.points[it].ending && !config.points[it].scheduled }
+        endingPass = false
         cycleSteps = buildCycleSteps()
         initTimers(SystemClock.uptimeMillis())
         // 실행 중에는 마커가 움직이지 않으므로 터치 좌표를 한 번만 계산한다 (상태바/노치 오프셋 보정)
@@ -1256,7 +1270,7 @@ class ClickService : AccessibilityService() {
         }
         stoppedAt = SystemClock.uptimeMillis()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
-        markers.forEachIndexed { k, m -> m.view.background = markerBackground(false, isScheduled(k)) }
+        markers.forEachIndexed { k, m -> m.view.background = markerBackground(false, isScheduled(k), config.points.getOrNull(k)?.ending == true) }
         // 이미 보낸 터치가 끝날 때까지 기다렸다가 마커를 다시 만질 수 있게 한다
         handler.postDelayed({ if (!running) setMarkersTouchable(true) }, STOP_GRACE_MS)
         applyMarkerVisibility()
@@ -1356,7 +1370,7 @@ class ClickService : AccessibilityService() {
         timerNext = LongArray(n) { Long.MAX_VALUE }
         timerEnd = LongArray(n) { Long.MAX_VALUE }
         config.points.forEachIndexed { i, p ->
-            if (!p.scheduled) return@forEachIndexed
+            if (!p.scheduled || p.ending) return@forEachIndexed
             timerNext[i] = now + p.startSec * 1000L
             if (p.durationSec > 0) timerEnd[i] = timerNext[i] + p.durationSec * 1000L
         }
@@ -1379,7 +1393,9 @@ class ClickService : AccessibilityService() {
      * 그룹 머리는 확률로 실행 여부를 정하고, 실행되면 묶음 전체를 groupRepeat번 반복한다.
      * 일반 포인트는 확률로 터치 여부를 정하되 시간은 그대로 흐르도록 목록에는 남긴다.
      */
-    private fun buildCycleSteps(): List<Pair<Int, Boolean>> {
+    private fun buildCycleSteps(): List<Pair<Int, Boolean>> = buildSteps(mainIdx)
+
+    private fun buildSteps(mainIdx: List<Int>): List<Pair<Int, Boolean>> {
         val out = mutableListOf<Pair<Int, Boolean>>()
         var i = 0
         while (i < mainIdx.size) {
@@ -1404,6 +1420,18 @@ class ClickService : AccessibilityService() {
             }
         }
         return out
+    }
+
+    /** 전체 반복이 끝났을 때. 종결 포인트가 있으면 종결 패스를 시작하고 false, 끝이면 true. */
+    private fun reachedEnd(): Boolean {
+        if (!endingPass && endingIdx.isNotEmpty()) {
+            endingPass = true
+            cycleSteps = buildSteps(endingIdx)
+            index = 0
+            tapRepeat = 0
+            return cycleSteps.isEmpty()
+        }
+        return true
     }
 
     /**
@@ -1440,7 +1468,10 @@ class ClickService : AccessibilityService() {
             // 이번 바퀴에 실행할 게 하나도 없으면(그룹이 모두 건너뜀 등) 바퀴만 넘긴다
             if (activeTimed < 0 && cycleSteps.isEmpty()) {
                 cycle++
-                if (activeRepeat in 1..cycle) { finished = true; break }
+                if (activeRepeat in 1..cycle) {
+                    if (reachedEnd()) { finished = true; break }
+                    continue // 종결 패스 시작됨
+                }
                 cycleSteps = buildCycleSteps()
                 t += config.loopDelayMs
                 if (cycleSteps.isEmpty()) { t += 200L; break }
@@ -1500,7 +1531,7 @@ class ClickService : AccessibilityService() {
                         index = 0
                         cycle++
                         if (activeRepeat in 1..cycle) {
-                            finished = true
+                            if (reachedEnd()) finished = true
                         } else {
                             gap += config.loopDelayMs
                             cycleSteps = buildCycleSteps()
@@ -1519,7 +1550,7 @@ class ClickService : AccessibilityService() {
         highlights.forEach { (at, i) ->
             handler.postDelayed({
                 if (running) markers.forEachIndexed { k, m ->
-                    m.view.background = markerBackground(k == i, config.points[k].scheduled)
+                    m.view.background = markerBackground(k == i, config.points[k].scheduled, config.points[k].ending)
                 }
             }, at)
         }
