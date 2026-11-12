@@ -70,6 +70,8 @@ class ClickService : AccessibilityService() {
 
     private var config = Config()
     private val markers = mutableListOf<Marker>()
+    /** 종료 매크로 포인트의 미리보기 마커(검정, 터치 안 됨) */
+    private val previewMarkers = mutableListOf<View>()
 
     private var panel: View? = null
     private lateinit var expandedView: LinearLayout
@@ -341,6 +343,9 @@ class ClickService : AccessibilityService() {
     private fun applyMarkerVisibility() {
         val visible = !minimized || running
         markers.forEach { it.view.visibility = if (visible) View.VISIBLE else View.GONE }
+        // 미리보기는 정지 상태에서 패널이 펼쳐져 있을 때만 보인다
+        val pv = !running && !minimized
+        previewMarkers.forEach { it.visibility = if (pv) View.VISIBLE else View.GONE }
     }
 
     /** 마커 색: 실행 중인 것은 초록, 예약 포인트는 파랑, 나머지는 빨강 */
@@ -633,12 +638,50 @@ class ClickService : AccessibilityService() {
     private fun removeMarkers() {
         markers.forEach { wm.removeView(it.view) }
         markers.clear()
+        removePreviewMarkers()
+    }
+
+    private fun removePreviewMarkers() {
+        previewMarkers.forEach { wm.removeView(it) }
+        previewMarkers.clear()
+    }
+
+    /** 설정된 종료 매크로의 포인트들을 검정 미리보기 원으로 보여준다 (정지 상태에서만). */
+    private fun addEndMacroPreview() {
+        removePreviewMarkers()
+        if (endPhase || running) return
+        val name = config.endMacro
+        if (name.isEmpty() || name !in Store.macroNames(this)) return
+        val preview = Store.load(this)
+        if (!Store.applyMacro(this, name, preview)) return
+        preview.points.forEachIndexed { i, p ->
+            val view = TextView(this).apply {
+                text = "종${i + 1}"
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#99000000"))
+                    setStroke(dp(2), Color.parseColor("#AAFFFFFF"))
+                }
+                alpha = 0.75f
+            }
+            val params = overlayParams(p.x - markerPx / 2, p.y - markerPx / 2).apply {
+                width = markerPx
+                height = markerPx
+                flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            }
+            wm.addView(view, params)
+            previewMarkers.add(view)
+        }
     }
 
     private fun rebuildMarkers() {
         removeMarkers()
         val labels = markerLabels()
         config.points.forEachIndexed { i, p -> markers.add(createMarker(i, labels[i], p)) }
+        addEndMacroPreview()
         applyMarkerVisibility()
         updateInfo()
     }
