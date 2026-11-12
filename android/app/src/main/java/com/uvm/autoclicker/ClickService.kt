@@ -1236,6 +1236,13 @@ class ClickService : AccessibilityService() {
             val cx = m.params.x + markerPx / 2
             val cy = m.params.y + markerPx / 2
             intArrayOf(cx - half, cy - half, cx + half, cy + half)
+        }.toMutableList()
+        // 패널(정지 버튼 포함) 영역도 구멍으로 남겨 실행 중에도 버튼을 누를 수 있게 한다
+        panel?.let { pv ->
+            val pw = if (pv.width > 0) pv.width else dp(120)
+            val ph = if (pv.height > 0) pv.height else dp(360)
+            holes.add(intArrayOf(panelParams.x - dp(4), panelParams.y - dp(4),
+                panelParams.x + pw + dp(4), panelParams.y + ph + dp(4)))
         }
         val dm = resources.displayMetrics
         val big = maxOf(dm.widthPixels, dm.heightPixels) * 3
