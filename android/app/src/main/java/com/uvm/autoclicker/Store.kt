@@ -83,6 +83,8 @@ data class Config(
     var currentMacro: String = "",
     /** ▶을 누르고 실제로 시작하기까지 기다리는 시간(초). 0 = 바로 시작. (예약 세션이 있으면 무시) */
     var startDelaySec: Int = 0,
+    /** 전체 반복이 끝난 뒤 마지막으로 한 번 실행할 종결 매크로 이름 (빈 문자열 = 없음) */
+    var endMacro: String = "",
     /** 예약 세션 목록. 비어 있지 않으면 ▶을 누른 시점 기준으로 각 세션 시각에 매크로를 반복 실행 */
     var sessions: MutableList<RunSession> = mutableListOf(),
     /** 예약/시작 대기 중 게임이 끊기지 않도록 이 간격(초)마다 1번 포인트를 한 번 터치. 0 = 끔 */
@@ -147,6 +149,7 @@ object Store {
         cfg.maxRunMinutes = m.maxRunMinutes
         cfg.tapDurationMs = m.tapDurationMs
         cfg.startDelaySec = m.startDelaySec
+        cfg.endMacro = m.endMacro
         cfg.sessions = m.sessions.map { it.copy() }.toMutableList()
         // keepAliveSec(유지 탭 간격)은 앱 전체 설정이라 매크로를 불러와도 그대로 둔다
         cfg.currentMacro = name
@@ -191,6 +194,7 @@ object Store {
             o.optBoolean("panelHorizontal", false),
             o.optString("currentMacro", ""),
             o.optInt("startDelaySec", 0).coerceAtLeast(0),
+            endMacro = o.optString("endMacro", ""),
             run {
                 val a = o.optJSONArray("sessions") ?: JSONArray()
                 MutableList(a.length()) { i ->
@@ -225,6 +229,7 @@ object Store {
             .put("panelHorizontal", cfg.panelHorizontal)
             .put("currentMacro", cfg.currentMacro)
             .put("startDelaySec", cfg.startDelaySec)
+            .put("endMacro", cfg.endMacro)
             .put("sessions", JSONArray().apply {
                 cfg.sessions.forEach { put(JSONObject().put("startSec", it.startSec).put("repeats", it.repeats)) }
             })

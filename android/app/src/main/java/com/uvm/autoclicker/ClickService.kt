@@ -100,6 +100,10 @@ class ClickService : AccessibilityService() {
     private var runBaseAt = 0L
     /** 지금 대기/실행 중인 예약 세션 번호 */
     private var sessionIdx = 0
+    /** 종결 매크로를 실행 중인가 */
+    private var endPhase = false
+    /** 종결 매크로 실행 동안 보관해 둔 원래(본) 매크로 설정 */
+    private var savedConfig: Config? = null
     /** 기본 순서에 들어가는 포인트 번호들 (예약 포인트 제외). index는 이 목록의 위치 */
     private var mainIdx: List<Int> = emptyList()
     private var index = 0
@@ -732,10 +736,18 @@ class ClickService : AccessibilityService() {
                 setOnClickListener { rowsBox.removeView(row); rows.removeAll { it.view === row } }
             }
             row = LinearLayout(theme).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(h); addView(small("시")); addView(m); addView(small("분")); addView(s); addView(small("초 "))
-                addView(rep); addView(small("회")); addView(del)
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+                addView(LinearLayout(theme).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(h); addView(small("시 ")); addView(m); addView(small("분 ")); addView(s); addView(small("초"))
+                })
+                addView(LinearLayout(theme).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(rep); addView(small("회 반복   ")); addView(del)
+                })
             }
             rows.add(Row(row, h, m, s, rep))
             rowsBox.addView(row)
@@ -744,6 +756,24 @@ class ClickService : AccessibilityService() {
 
         val repeatInput = numberInput(config.repeat, 56)
         val keepAlive = numberInput(config.keepAliveSec, 56)
+        // 종결 매크로 선택
+        var endMacroSel = config.endMacro
+        val endMacroBtn = TextView(theme).apply {
+            setPadding(0, dp(8), 0, dp(8))
+            text = "종결 매크로: " + (endMacroSel.ifEmpty { "없음" })
+            setOnClickListener {
+                val names = Store.macroNames(this@ClickService)
+                val items = (listOf("없음") + names).toTypedArray()
+                overlayDialog(
+                    AlertDialog.Builder(theme)
+                        .setTitle("전체 반복 뒤 마지막에 실행할 매크로")
+                        .setItems(items) { _, which ->
+                            endMacroSel = if (which == 0) "" else items[which]
+                            text = "종결 매크로: " + (endMacroSel.ifEmpty { "없음" })
+                        }
+                ).show()
+            }
+        }
         val addBtn = TextView(theme).apply {
             text = "＋ 세션 추가"
             setPadding(0, dp(8), 0, dp(8))
@@ -758,6 +788,8 @@ class ClickService : AccessibilityService() {
                 gravity = Gravity.CENTER_VERTICAL
                 addView(repeatInput); addView(small(" 회"))
             })
+            addView(endMacroBtn)
+            addView(small("전체 반복이 끝난 뒤 위 매크로를 마지막으로 한 번 실행합니다.\n"))
             addView(small("\n예약 세션 (여러 시간에 나눠 실행) — ▶을 누른 시점 기준으로 정한 시간에 매크로를 '횟수'만큼 실행합니다. 세션이 없으면 바로 실행됩니다."))
             addView(rowsBox)
             addView(addBtn)
@@ -797,6 +829,7 @@ class ClickService : AccessibilityService() {
                         return@setPositiveButton
                     }
                     config.repeat = rp
+                    config.endMacro = endMacroSel
                     config.sessions = newSessions
                     config.keepAliveSec = ka
                     Store.save(this, config)
@@ -958,8 +991,7 @@ class ClickService : AccessibilityService() {
         setScreenDimHint(true)
         handler.removeCallbacksAndMessages(null)
         if (sessionIdx >= config.sessions.size) {
-            stop()
-            Toast.makeText(this, "예약 세션을 모두 마쳤습니다", Toast.LENGTH_SHORT).show()
+            finishOrEndMacro("예약 세션을 모두 마쳤습니다")
             return
         }
         val s = config.sessions[sessionIdx]
@@ -981,9 +1013,41 @@ class ClickService : AccessibilityService() {
             sessionIdx++
             waitForSession()
         } else {
-            stop()
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            finishOrEndMacro(message)
         }
+    }
+
+    /** 본 매크로가 끝났을 때: 종결 매크로가 있으면 한 번 더 실행하고, 없으면 정지한다. */
+    private fun finishOrEndMacro(message: String) {
+        if (!endPhase && config.endMacro.isNotEmpty() && config.endMacro in Store.macroNames(this)) {
+            startEndPhase(config.endMacro)
+        } else {
+            val wasEnd = endPhase
+            stop() // stop()이 종결 상태면 원래 매크로로 되돌린다
+            Toast.makeText(this, if (wasEnd) "종결 매크로까지 완료" else message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 종결 매크로를 임시로 올려 한 번 실행한다. 원래 매크로는 보관했다가 끝나면 되돌린다. */
+    private fun startEndPhase(name: String) {
+        savedConfig = config
+        val endCfg = Store.load(this) // 앱 전체 설정(정지 방법 등)은 그대로 쓰고 포인트/설정만 덮어쓴다
+        if (!Store.applyMacro(this, name, endCfg)) {
+            stop()
+            Toast.makeText(this, "종결 매크로 '$name'을(를) 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        endCfg.repeat = 1
+        endCfg.sessions.clear()
+        endCfg.startDelaySec = 0
+        endCfg.endMacro = "" // 종결 매크로가 또 종결 매크로를 부르지 않게
+        config = endCfg
+        endPhase = true
+        rebuildMarkers()
+        runBaseAt = SystemClock.uptimeMillis()
+        activeRepeat = 1
+        Toast.makeText(this, "종결 매크로 '$name' 실행", Toast.LENGTH_SHORT).show()
+        beginRun()
     }
 
     /** 시작 대기 중 남은 시간을 1초마다 표시하고, 시간이 되면 실행을 시작한다. */
@@ -1116,6 +1180,13 @@ class ClickService : AccessibilityService() {
         startAt = 0L
         runBaseAt = 0L
         sessionIdx = 0
+        if (endPhase) {
+            // 종결 매크로 실행이 끝났으니 원래 매크로로 되돌린다
+            savedConfig?.let { config = it }
+            savedConfig = null
+            endPhase = false
+            rebuildMarkers()
+        }
         stoppedAt = SystemClock.uptimeMillis()
         if (::playBtn.isInitialized) playBtn.text = buttonText("▶", "시작")
         markers.forEachIndexed { k, m -> m.view.background = markerBackground(false, isScheduled(k)) }
