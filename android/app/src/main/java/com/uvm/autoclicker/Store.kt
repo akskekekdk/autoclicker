@@ -10,6 +10,13 @@ const val DEFAULT_TAP_DURATION_MS = 30L
 /** "새 포인트 기본 대기 시간"의 초기값 (설정 화면에서 바꿀 수 있음) */
 const val DEFAULT_DELAY_MS = 150L
 
+/** 실행을 멈추는 방법 */
+enum class StopMode(val label: String) {
+    BUTTON_ONLY("정지 버튼으로만"),
+    LONG_PRESS("화면을 길게 누르면"),
+    ANY_TOUCH("화면을 터치하면"),
+}
+
 /** 포인트 동작: 터치 또는 한 방향으로 밀기(스크롤) */
 enum class Action(val label: String, val arrow: String) {
     TAP("터치", ""),
@@ -65,7 +72,7 @@ data class Config(
     /** ＋로 새로 추가하는 포인트의 대기 시간 */
     var defaultDelayMs: Long = DEFAULT_DELAY_MS,
     /** 실행 중 사용자가 화면을 터치하면 정지 */
-    var stopOnTouch: Boolean = true,
+    var stopMode: StopMode = StopMode.ANY_TOUCH,
     /** 한 번 터치할 때 누르고 있는 시간 */
     var tapDurationMs: Long = DEFAULT_TAP_DURATION_MS,
     /** 최대 실행 시간(분). 0 = 제한 없음. 반복 횟수와 둘 중 먼저 도달하면 정지 */
@@ -173,7 +180,12 @@ object Store {
             o.optInt("repeat", 0),
             o.optLong("loopDelayMs", 0),
             o.optLong("defaultDelayMs", DEFAULT_DELAY_MS),
-            o.optBoolean("stopOnTouch", true),
+            run {
+                val name = o.optString("stopMode", "")
+                StopMode.entries.firstOrNull { it.name == name }
+                    // 이전 버전 호환: stopOnTouch(true=터치, false=버튼만)
+                    ?: if (o.optBoolean("stopOnTouch", true)) StopMode.ANY_TOUCH else StopMode.BUTTON_ONLY
+            },
             o.optLong("tapDurationMs", DEFAULT_TAP_DURATION_MS).coerceIn(1, 2000),
             o.optInt("maxRunMinutes", 0).coerceAtLeast(0),
             o.optBoolean("panelHorizontal", false),
@@ -207,7 +219,7 @@ object Store {
             .put("repeat", cfg.repeat)
             .put("loopDelayMs", cfg.loopDelayMs)
             .put("defaultDelayMs", cfg.defaultDelayMs)
-            .put("stopOnTouch", cfg.stopOnTouch)
+            .put("stopMode", cfg.stopMode.name)
             .put("tapDurationMs", cfg.tapDurationMs)
             .put("maxRunMinutes", cfg.maxRunMinutes)
             .put("panelHorizontal", cfg.panelHorizontal)

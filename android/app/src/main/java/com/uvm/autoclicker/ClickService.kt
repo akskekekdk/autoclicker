@@ -1026,7 +1026,7 @@ class ClickService : AccessibilityService() {
             m.view.getLocationOnScreen(loc)
             floatArrayOf((loc[0] + m.view.width / 2).toFloat(), (loc[1] + m.view.height / 2).toFloat())
         }
-        if (config.stopOnTouch) addTouchCatchers()
+        if (config.stopMode != StopMode.BUTTON_ONLY) addTouchCatchers()
         runEndAt = if (config.maxRunMinutes > 0) {
             SystemClock.uptimeMillis() + config.maxRunMinutes * 60_000L
         } else {
@@ -1130,9 +1130,31 @@ class ClickService : AccessibilityService() {
         val big = maxOf(dm.widthPixels, dm.heightPixels) * 3
         for (r in coverRects(holes, -big, -big, big, big)) {
             val view = View(this)
-            view.setOnTouchListener { _, e ->
-                if (e.actionMasked == MotionEvent.ACTION_DOWN) stopByTouch()
-                true
+            if (config.stopMode == StopMode.LONG_PRESS) {
+                val slop = ViewConfiguration.get(this).scaledTouchSlop
+                val timeout = ViewConfiguration.getLongPressTimeout().toLong()
+                var downX = 0f
+                var downY = 0f
+                val longPress = Runnable { if (running) stopByTouch() }
+                view.setOnTouchListener { _, e ->
+                    when (e.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            downX = e.rawX; downY = e.rawY
+                            handler.postDelayed(longPress, timeout)
+                        }
+                        MotionEvent.ACTION_MOVE ->
+                            if (abs(e.rawX - downX) > slop || abs(e.rawY - downY) > slop)
+                                handler.removeCallbacks(longPress)
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                            handler.removeCallbacks(longPress)
+                    }
+                    true
+                }
+            } else {
+                view.setOnTouchListener { _, e ->
+                    if (e.actionMasked == MotionEvent.ACTION_DOWN) stopByTouch()
+                    true
+                }
             }
             val params = overlayParams(r[0], r[1]).apply {
                 width = r[2] - r[0]
@@ -1359,7 +1381,7 @@ class ClickService : AccessibilityService() {
             override fun onCancelled(g: GestureDescription?) {
                 if (!running) return
                 // 앱이 터치하는 중에 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
-                if (config.stopOnTouch) {
+                if (config.stopMode == StopMode.ANY_TOUCH) {
                     stopByTouch()
                 } else {
                     handler.postDelayed({ afterBatch() }, waitAfter)

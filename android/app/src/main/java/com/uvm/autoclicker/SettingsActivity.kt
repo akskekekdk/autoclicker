@@ -15,6 +15,9 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.view.View
+import android.widget.RadioGroup
+import android.widget.RadioButton
 import android.widget.TextView
 import android.widget.Toast
 
@@ -44,7 +47,7 @@ class SettingsActivity : Activity() {
 
     private var config = Config()
     private lateinit var defaultDelayEdit: EditText
-    private lateinit var stopOnTouchCheck: CheckBox
+    private lateinit var stopModeGroup: RadioGroup
     private lateinit var tapDurationEdit: EditText
     private val delayEdits = mutableListOf<EditText>()
     private val tapsEdits = mutableListOf<EditText>()
@@ -150,8 +153,16 @@ class SettingsActivity : Activity() {
         tapDurationEdit = numberEdit()
         root.addView(row("터치 누르는 시간 (ms)", tapDurationEdit))
         root.addView(text("작을수록 연타가 빨라집니다. 터치가 가끔 안 먹히면 50~100으로 늘려보세요."))
-        stopOnTouchCheck = CheckBox(this).apply { text = "실행 중 화면을 터치하면 정지" }
-        root.addView(stopOnTouchCheck)
+        root.addView(title("정지 방법"))
+        stopModeGroup = RadioGroup(this)
+        StopMode.entries.forEach { mode ->
+            stopModeGroup.addView(RadioButton(this).apply {
+                id = View.generateViewId()
+                text = mode.label
+                tag = mode
+            })
+        }
+        root.addView(stopModeGroup)
 
         root.addView(title("4. 포인트별 대기 시간 / 터치 횟수"))
         pointsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -244,7 +255,10 @@ class SettingsActivity : Activity() {
         limitHoursEdit.setText((config.maxRunMinutes / 60).toString())
         limitMinutesEdit.setText((config.maxRunMinutes % 60).toString())
         defaultDelayEdit.setText(config.defaultDelayMs.toString())
-        stopOnTouchCheck.isChecked = config.stopOnTouch
+        for (i in 0 until stopModeGroup.childCount) {
+            val rb = stopModeGroup.getChildAt(i) as RadioButton
+            if (rb.tag == config.stopMode) rb.isChecked = true
+        }
         tapDurationEdit.setText(config.tapDurationMs.toString())
         renderPoints()
         renderStatus()
@@ -421,7 +435,8 @@ class SettingsActivity : Activity() {
         }
         latest.keepAliveSec = keepAlive
         latest.defaultDelayMs = defaultDelay
-        latest.stopOnTouch = stopOnTouchCheck.isChecked
+        latest.stopMode = (stopModeGroup.findViewById<RadioButton>(stopModeGroup.checkedRadioButtonId)?.tag as? StopMode)
+            ?: StopMode.ANY_TOUCH
         latest.tapDurationMs = tapDuration
         Store.save(this, latest)
         config = latest
