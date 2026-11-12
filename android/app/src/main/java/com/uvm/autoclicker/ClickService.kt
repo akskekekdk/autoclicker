@@ -531,7 +531,7 @@ class ClickService : AccessibilityService() {
             addView(groupSizeInput)
             addView(label("묶음 반복 횟수 (묶음 전체를 몇 번 실행)"))
             addView(groupRepeatInput)
-            addView(label("'묶음 반복 횟수'는 그룹 수가 1이어도 적용됩니다 (이 포인트를 묶음처럼 그 횟수만큼 반복). 묶었을 때 위 '실행 확률'은 묶음 전체의 실행 확률이 됩니다."))
+            addView(label("'묶음 반복 횟수'는 그룹 수가 1이어도 적용됩니다 (이 포인트를 그 횟수만큼 반복). 묶음 안 각 포인트는 자기 '실행 확률'로 따로 실행됩니다."))
         }
         val advancedBox = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
@@ -1338,16 +1338,11 @@ class ClickService : AccessibilityService() {
             // 포인트를 2개 이상 묶었거나(size>1), 한 포인트라도 묶음 반복이 2 이상이면 묶음으로 본다
             if (size > 1 || groupRep > 1) {
                 val block = (i until minOf(i + size, mainIdx.size)).map { mainIdx[it] }
-                // 머리의 확률은 묶음 전체의 실행 여부를 정한다. 통과하면 묶음을 groupRep번 반복하되
-                // 묶음 안 각 포인트는 자기 확률로 터치 여부를 따로 정한다 (머리는 항상 터치).
-                val run = head.chance >= 100 || Random.nextInt(100) < head.chance
-                if (run) repeat(groupRep) {
-                    block.forEachIndexed { k, pi ->
-                        val doTap = if (k == 0) true else {
-                            val c = config.points[pi].chance
-                            c >= 100 || Random.nextInt(100) < c
-                        }
-                        out.add(pi to doTap)
+                // 묶음을 groupRep번 반복한다. 머리를 포함한 각 포인트는 자기 확률로 터치 여부를 따로 정한다.
+                repeat(groupRep) {
+                    block.forEach { pi ->
+                        val c = config.points[pi].chance
+                        out.add(pi to (c >= 100 || Random.nextInt(100) < c))
                     }
                 }
                 i += block.size

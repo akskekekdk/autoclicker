@@ -56,7 +56,7 @@ data class ClickPoint(
     var durationSec: Int = 0,
     /**
      * 그룹 묶기: groupSize>1이면 이 포인트부터 groupSize개를 한 묶음으로 본다.
-     * 묶음은 이 포인트의 확률(chance)로 실행 여부를 정하고, 실행되면 전체를 groupRepeat번 반복한다.
+     * 묶음은 전체를 groupRepeat번 반복하고, 묶음 안 각 포인트는 자기 확률(chance)로 터치 여부를 따로 정한다.
      * 묶음에 속한 뒤 포인트들은 개별 차례에서 실행되지 않는다.
      */
     var groupSize: Int = 1,
