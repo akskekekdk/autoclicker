@@ -793,21 +793,19 @@ class ClickService : AccessibilityService() {
         val keepAlive = numberInput(config.keepAliveSec, 56)
         // 종료 매크로 선택
         var endMacroSel = config.endMacro
-        val endMacroBtn = TextView(theme).apply {
-            setPadding(0, dp(8), 0, dp(8))
-            text = "종료 매크로: " + (endMacroSel.ifEmpty { "없음" })
-            setOnClickListener {
-                val names = Store.macroNames(this@ClickService)
-                val items = (listOf("없음") + names).toTypedArray()
-                overlayDialog(
-                    AlertDialog.Builder(theme)
-                        .setTitle("전체 반복 뒤 마지막에 실행할 매크로")
-                        .setItems(items) { _, which ->
-                            endMacroSel = if (which == 0) "" else items[which]
-                            text = "종료 매크로: " + (endMacroSel.ifEmpty { "없음" })
-                        }
-                ).show()
-            }
+        val endMacroBtn = android.widget.Button(theme)
+        endMacroBtn.text = "종료 매크로: " + (endMacroSel.ifEmpty { "없음" })
+        endMacroBtn.setOnClickListener {
+            val names = Store.macroNames(this@ClickService)
+            val items = (listOf("없음") + names).toTypedArray()
+            overlayDialog(
+                AlertDialog.Builder(theme)
+                    .setTitle("전체 반복 뒤 마지막에 실행할 매크로")
+                    .setItems(items) { _, which ->
+                        endMacroSel = if (which == 0) "" else items[which]
+                        endMacroBtn.text = "종료 매크로: " + (endMacroSel.ifEmpty { "없음" })
+                    }
+            ).show()
         }
         val addBtn = TextView(theme).apply {
             text = "＋ 세션 추가"
@@ -817,8 +815,13 @@ class ClickService : AccessibilityService() {
         val box = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(8), dp(18), 0)
+            addView(TextView(theme).apply {
+                text = "■ 종료 매크로 (전체 반복이 끝난 뒤 1회 실행, 검정 원)"
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, dp(4), 0, dp(4))
+            })
             addView(endMacroBtn)
-            addView(small("전체 반복이 끝난 뒤 위 매크로를 마지막으로 한 번 실행합니다.\n"))
+            addView(small("눌러서 '없음' 또는 미리 저장해 둔 매크로를 고릅니다. 💾 '현재 상태 저장'을 누르면 매크로에 함께 저장됩니다.\n"))
             addView(small("\n예약 세션 (여러 시간에 나눠 실행) — ▶을 누른 시점 기준으로 정한 시간에 매크로를 '횟수'만큼 실행합니다. 세션이 없으면 바로 실행됩니다."))
             addView(rowsBox)
             addView(addBtn)
