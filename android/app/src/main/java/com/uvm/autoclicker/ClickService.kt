@@ -76,8 +76,6 @@ class ClickService : AccessibilityService() {
     private lateinit var foldBtn: TextView
     private lateinit var orientBtn: TextView
     private lateinit var handleView: TextView
-    private lateinit var gridBox: LinearLayout
-    private var gridButtons: List<TextView> = emptyList()
     private var foldable: List<View> = emptyList()
     private var minimized = false
     private lateinit var panelParams: WindowManager.LayoutParams
@@ -265,8 +263,8 @@ class ClickService : AccessibilityService() {
         orientBtn = panelButton("⇄", "가로") { togglePanelOrientation() }
 
         foldBtn = panelButton("▲", "접기") { setMinimized(!minimized) }
-        // 그리드에 두 줄로 배치할 버튼들 (핸들·접기·정보 제외)
-        gridButtons = listOf(
+        // 접었을 때 숨길 버튼들 (핸들과 접기/펼치기 버튼은 항상 보임)
+        foldable = listOf(
             playBtn,
             panelButton("＋", "추가") { addPoint() },
             panelButton("－", "삭제") { removeLastPoint() },
@@ -276,13 +274,11 @@ class ClickService : AccessibilityService() {
             panelButton("⚙", "설정") { openSettings() },
             orientBtn,
             panelButton("✕", "닫기") { hidePanel() },
+            infoText,
         )
-        // 접으면 숨길 것들 = 그리드 버튼 전체 + 정보 (핸들·접기 버튼은 항상 보임)
-        foldable = gridButtons + listOf(infoText)
 
-        gridBox = LinearLayout(this)
         expandedView.addView(handle)
-        expandedView.addView(gridBox)
+        foldable.dropLast(1).forEach { expandedView.addView(it) }
         expandedView.addView(foldBtn)
         expandedView.addView(infoText)
 
@@ -312,30 +308,25 @@ class ClickService : AccessibilityService() {
     private fun applyPanelOrientation() {
         val horizontal = config.panelHorizontal
         val btnW = dp(if (horizontal) 42 else 52)
-        val btnH = dp(48)
+        val btnH = dp(50)
         expandedView.orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         expandedView.gravity = if (horizontal) Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL
-        if (horizontal) expandedView.setPadding(dp(4), dp(2), dp(4), dp(2))
-        else expandedView.setPadding(dp(2), dp(4), dp(2), dp(4))
-
-        handleView.layoutParams = if (horizontal) LinearLayout.LayoutParams(dp(22), btnH)
-        else LinearLayout.LayoutParams(btnW, dp(26))
-        foldBtn.layoutParams = LinearLayout.LayoutParams(btnW, btnH)
-        infoText.layoutParams = if (horizontal) LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, btnH)
-        else LinearLayout.LayoutParams(btnW, LinearLayout.LayoutParams.WRAP_CONTENT)
-        infoText.minWidth = if (horizontal) dp(36) else 0
-
-        // 그리드: 버튼을 2개씩 묶어 두 줄로 배치 (세로 패널=2열, 가로 패널=2행)
-        gridButtons.forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
-        gridBox.removeAllViews()
-        gridBox.orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        gridButtons.chunked(2).forEach { pair ->
-            val cell = LinearLayout(this).apply {
-                orientation = if (horizontal) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-            }
-            pair.forEach { cell.addView(it, LinearLayout.LayoutParams(btnW, btnH)) }
-            gridBox.addView(cell)
+        if (horizontal) {
+            expandedView.setPadding(dp(4), dp(2), dp(4), dp(2))
+        } else {
+            expandedView.setPadding(dp(2), dp(4), dp(2), dp(4))
         }
+        for (i in 0 until expandedView.childCount) {
+            val child = expandedView.getChildAt(i)
+            child.layoutParams = when (child) {
+                handleView -> if (horizontal) LinearLayout.LayoutParams(dp(24), btnH)
+                else LinearLayout.LayoutParams(btnW, dp(28))
+                infoText -> if (horizontal) LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, btnH)
+                else LinearLayout.LayoutParams(btnW, LinearLayout.LayoutParams.WRAP_CONTENT)
+                else -> LinearLayout.LayoutParams(btnW, btnH)
+            }
+        }
+        infoText.minWidth = if (horizontal) dp(36) else 0
         orientBtn.text = if (horizontal) buttonText("⇅", "세로") else buttonText("⇄", "가로")
     }
 
