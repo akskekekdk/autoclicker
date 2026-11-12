@@ -268,6 +268,7 @@ class ClickService : AccessibilityService() {
             playBtn,
             panelButton("＋", "추가") { addPoint() },
             panelButton("－", "삭제") { removeLastPoint() },
+            panelButton("🔁", "반복") { showRepeatDialog() },
             panelButton("⏰", "예약") { showScheduleDialog() },
             panelButton("💾", "매크로") { showMacroDialog() },
             panelButton("⚙", "설정") { openSettings() },
@@ -710,6 +711,40 @@ class ClickService : AccessibilityService() {
 
     private val dialogTheme get() = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
 
+    /** 전체 반복 횟수를 패널에서 바로 정한다. */
+    private fun showRepeatDialog() {
+        if (running) return
+        val theme = dialogTheme
+        val input = EditText(theme).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setText(config.repeat.toString())
+            setSelectAllOnFocus(true)
+        }
+        val box = LinearLayout(theme).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(TextView(theme).apply { text = "매크로 한 바퀴를 몇 번 반복할지 (0 = 무한)" })
+            addView(input)
+        }
+        overlayDialog(
+            AlertDialog.Builder(theme)
+                .setTitle("전체 반복 횟수")
+                .setView(box)
+                .setPositiveButton("저장") { _, _ ->
+                    val rp = input.text.toString().ifBlank { "0" }.toIntOrNull()
+                    if (rp == null || rp < 0) {
+                        Toast.makeText(this, "0 이상의 숫자로 입력하세요", Toast.LENGTH_SHORT).show()
+                    } else {
+                        config.repeat = rp
+                        Store.save(this, config)
+                        Toast.makeText(this, if (rp == 0) "무한 반복" else "$rp 회 반복", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("취소", null)
+        ).show()
+    }
+
     /** 패널에서 바로 예약 세션과 유지 탭을 편집한다 (설정 화면 없이). */
     private fun showScheduleDialog() {
         if (running) return
@@ -754,7 +789,6 @@ class ClickService : AccessibilityService() {
         }
         config.sessions.forEach { addRow(it.startSec, it.repeats) }
 
-        val repeatInput = numberInput(config.repeat, 56)
         val keepAlive = numberInput(config.keepAliveSec, 56)
         // 종결 매크로 선택
         var endMacroSel = config.endMacro
@@ -782,12 +816,6 @@ class ClickService : AccessibilityService() {
         val box = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(8), dp(18), 0)
-            addView(small("전체 반복 횟수 (0 = 무한). 매크로 한 바퀴를 몇 번 반복할지."))
-            addView(LinearLayout(theme).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(repeatInput); addView(small(" 회"))
-            })
             addView(endMacroBtn)
             addView(small("전체 반복이 끝난 뒤 위 매크로를 마지막으로 한 번 실행합니다.\n"))
             addView(small("\n예약 세션 (여러 시간에 나눠 실행) — ▶을 누른 시점 기준으로 정한 시간에 매크로를 '횟수'만큼 실행합니다. 세션이 없으면 바로 실행됩니다."))
@@ -823,12 +851,6 @@ class ClickService : AccessibilityService() {
                         Toast.makeText(this, "유지 탭 간격은 0 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
                         return@setPositiveButton
                     }
-                    val rp = repeatInput.text.toString().ifBlank { "0" }.toIntOrNull()
-                    if (rp == null || rp < 0) {
-                        Toast.makeText(this, "전체 반복 횟수는 0 이상으로 입력하세요", Toast.LENGTH_SHORT).show()
-                        return@setPositiveButton
-                    }
-                    config.repeat = rp
                     config.endMacro = endMacroSel
                     config.sessions = newSessions
                     config.keepAliveSec = ka
