@@ -379,10 +379,11 @@ class ClickService : AccessibilityService() {
 
     private fun markerText(label: String, point: ClickPoint): SpannableString {
         val n = label.length + 1
-        if (point.groupSize > 1) {
+        if (point.groupSize > 1 || point.groupRepeat > 1) {
+            val g = if (point.groupSize > 1) "⊏${point.groupSize}" else "↻"
             val rep = if (point.groupRepeat > 1) "×${point.groupRepeat}" else ""
             val ch = if (point.chance < 100) " ${point.chance}%" else ""
-            return SpannableString("$label\n⊏${point.groupSize}$rep$ch").apply {
+            return SpannableString("$label\n$g$rep$ch").apply {
                 setSpan(RelativeSizeSpan(0.5f), n, length, 0)
             }
         }
@@ -525,7 +526,7 @@ class ClickService : AccessibilityService() {
             addView(groupSizeInput)
             addView(label("묶음 반복 횟수 (묶음 전체를 몇 번 실행)"))
             addView(groupRepeatInput)
-            addView(label("묶었을 때 위 '실행 확률'은 묶음 전체의 실행 확률이 되고, 통과하면 묶음 안 포인트를 끝까지 실행합니다."))
+            addView(label("'묶음 반복 횟수'는 그룹 수가 1이어도 적용됩니다 (이 포인트를 묶음처럼 그 횟수만큼 반복). 묶었을 때 위 '실행 확률'은 묶음 전체의 실행 확률이 됩니다."))
         }
         val advancedBox = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
@@ -544,7 +545,7 @@ class ClickService : AccessibilityService() {
             }
         }
         // 그룹이나 예약이 이미 설정돼 있으면 고급 설정을 펼친 상태로 연다
-        if (point.groupSize > 1 || point.scheduled) {
+        if (point.groupSize > 1 || point.groupRepeat > 1 || point.scheduled) {
             advancedBox.visibility = View.VISIBLE
             advancedToggle.text = "고급 설정 (그룹·예약) ▴"
         }
@@ -1240,10 +1241,12 @@ class ClickService : AccessibilityService() {
             val headPi = mainIdx[i]
             val head = config.points[headPi]
             val size = head.groupSize.coerceAtLeast(1)
-            if (size > 1) {
+            val groupRep = head.groupRepeat.coerceAtLeast(1)
+            // 포인트를 2개 이상 묶었거나(size>1), 한 포인트라도 묶음 반복이 2 이상이면 묶음으로 본다
+            if (size > 1 || groupRep > 1) {
                 val block = (i until minOf(i + size, mainIdx.size)).map { mainIdx[it] }
                 val run = head.chance >= 100 || Random.nextInt(100) < head.chance
-                if (run) repeat(head.groupRepeat.coerceAtLeast(1)) { block.forEach { out.add(it to true) } }
+                if (run) repeat(groupRep) { block.forEach { out.add(it to true) } }
                 i += block.size
             } else {
                 out.add(headPi to (head.chance >= 100 || Random.nextInt(100) < head.chance))
