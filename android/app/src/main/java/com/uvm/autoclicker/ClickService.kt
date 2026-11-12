@@ -76,6 +76,8 @@ class ClickService : AccessibilityService() {
     private lateinit var foldBtn: TextView
     private lateinit var orientBtn: TextView
     private lateinit var handleView: TextView
+    private lateinit var gridBox: LinearLayout
+    private var gridButtons: List<TextView> = emptyList()
     private var foldable: List<View> = emptyList()
     private var minimized = false
     private lateinit var panelParams: WindowManager.LayoutParams
@@ -100,9 +102,9 @@ class ClickService : AccessibilityService() {
     private var runBaseAt = 0L
     /** 지금 대기/실행 중인 예약 세션 번호 */
     private var sessionIdx = 0
-    /** 종결 매크로를 실행 중인가 */
+    /** 종료 매크로를 실행 중인가 */
     private var endPhase = false
-    /** 종결 매크로 실행 동안 보관해 둔 원래(본) 매크로 설정 */
+    /** 종료 매크로 실행 동안 보관해 둔 원래(본) 매크로 설정 */
     private var savedConfig: Config? = null
     /** 기본 순서에 들어가는 포인트 번호들 (예약 포인트 제외). index는 이 목록의 위치 */
     private var mainIdx: List<Int> = emptyList()
@@ -263,8 +265,8 @@ class ClickService : AccessibilityService() {
         orientBtn = panelButton("⇄", "가로") { togglePanelOrientation() }
 
         foldBtn = panelButton("▲", "접기") { setMinimized(!minimized) }
-        // 접었을 때 숨길 버튼들 (핸들과 접기/펼치기 버튼은 항상 보임)
-        foldable = listOf(
+        // 그리드에 두 줄로 배치할 버튼들 (핸들·접기·정보 제외)
+        gridButtons = listOf(
             playBtn,
             panelButton("＋", "추가") { addPoint() },
             panelButton("－", "삭제") { removeLastPoint() },
@@ -274,11 +276,13 @@ class ClickService : AccessibilityService() {
             panelButton("⚙", "설정") { openSettings() },
             orientBtn,
             panelButton("✕", "닫기") { hidePanel() },
-            infoText,
         )
+        // 접으면 숨길 것들 = 그리드 버튼 전체 + 정보 (핸들·접기 버튼은 항상 보임)
+        foldable = gridButtons + listOf(infoText)
 
+        gridBox = LinearLayout(this)
         expandedView.addView(handle)
-        foldable.dropLast(1).forEach { expandedView.addView(it) }
+        expandedView.addView(gridBox)
         expandedView.addView(foldBtn)
         expandedView.addView(infoText)
 
@@ -308,25 +312,30 @@ class ClickService : AccessibilityService() {
     private fun applyPanelOrientation() {
         val horizontal = config.panelHorizontal
         val btnW = dp(if (horizontal) 42 else 52)
-        val btnH = dp(50)
+        val btnH = dp(48)
         expandedView.orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         expandedView.gravity = if (horizontal) Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL
-        if (horizontal) {
-            expandedView.setPadding(dp(4), dp(2), dp(4), dp(2))
-        } else {
-            expandedView.setPadding(dp(2), dp(4), dp(2), dp(4))
-        }
-        for (i in 0 until expandedView.childCount) {
-            val child = expandedView.getChildAt(i)
-            child.layoutParams = when (child) {
-                handleView -> if (horizontal) LinearLayout.LayoutParams(dp(24), btnH)
-                else LinearLayout.LayoutParams(btnW, dp(28))
-                infoText -> if (horizontal) LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, btnH)
-                else LinearLayout.LayoutParams(btnW, LinearLayout.LayoutParams.WRAP_CONTENT)
-                else -> LinearLayout.LayoutParams(btnW, btnH)
-            }
-        }
+        if (horizontal) expandedView.setPadding(dp(4), dp(2), dp(4), dp(2))
+        else expandedView.setPadding(dp(2), dp(4), dp(2), dp(4))
+
+        handleView.layoutParams = if (horizontal) LinearLayout.LayoutParams(dp(22), btnH)
+        else LinearLayout.LayoutParams(btnW, dp(26))
+        foldBtn.layoutParams = LinearLayout.LayoutParams(btnW, btnH)
+        infoText.layoutParams = if (horizontal) LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, btnH)
+        else LinearLayout.LayoutParams(btnW, LinearLayout.LayoutParams.WRAP_CONTENT)
         infoText.minWidth = if (horizontal) dp(36) else 0
+
+        // 그리드: 버튼을 2개씩 묶어 두 줄로 배치 (세로 패널=2열, 가로 패널=2행)
+        gridButtons.forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        gridBox.removeAllViews()
+        gridBox.orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        gridButtons.chunked(2).forEach { pair ->
+            val cell = LinearLayout(this).apply {
+                orientation = if (horizontal) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            }
+            pair.forEach { cell.addView(it, LinearLayout.LayoutParams(btnW, btnH)) }
+            gridBox.addView(cell)
+        }
         orientBtn.text = if (horizontal) buttonText("⇅", "세로") else buttonText("⇄", "가로")
     }
 
@@ -349,6 +358,7 @@ class ClickService : AccessibilityService() {
         setColor(
             when {
                 active -> Color.parseColor("#AA00C853")
+                endPhase -> Color.parseColor("#CC000000") // 종료 매크로 실행 중에는 검정
                 scheduled -> Color.parseColor("#882962FF")
                 else -> Color.parseColor("#88E53935")
             }
@@ -790,11 +800,11 @@ class ClickService : AccessibilityService() {
         config.sessions.forEach { addRow(it.startSec, it.repeats) }
 
         val keepAlive = numberInput(config.keepAliveSec, 56)
-        // 종결 매크로 선택
+        // 종료 매크로 선택
         var endMacroSel = config.endMacro
         val endMacroBtn = TextView(theme).apply {
             setPadding(0, dp(8), 0, dp(8))
-            text = "종결 매크로: " + (endMacroSel.ifEmpty { "없음" })
+            text = "종료 매크로: " + (endMacroSel.ifEmpty { "없음" })
             setOnClickListener {
                 val names = Store.macroNames(this@ClickService)
                 val items = (listOf("없음") + names).toTypedArray()
@@ -803,7 +813,7 @@ class ClickService : AccessibilityService() {
                         .setTitle("전체 반복 뒤 마지막에 실행할 매크로")
                         .setItems(items) { _, which ->
                             endMacroSel = if (which == 0) "" else items[which]
-                            text = "종결 매크로: " + (endMacroSel.ifEmpty { "없음" })
+                            text = "종료 매크로: " + (endMacroSel.ifEmpty { "없음" })
                         }
                 ).show()
             }
@@ -1039,36 +1049,36 @@ class ClickService : AccessibilityService() {
         }
     }
 
-    /** 본 매크로가 끝났을 때: 종결 매크로가 있으면 한 번 더 실행하고, 없으면 정지한다. */
+    /** 본 매크로가 끝났을 때: 종료 매크로가 있으면 한 번 더 실행하고, 없으면 정지한다. */
     private fun finishOrEndMacro(message: String) {
         if (!endPhase && config.endMacro.isNotEmpty() && config.endMacro in Store.macroNames(this)) {
             startEndPhase(config.endMacro)
         } else {
             val wasEnd = endPhase
             stop() // stop()이 종결 상태면 원래 매크로로 되돌린다
-            Toast.makeText(this, if (wasEnd) "종결 매크로까지 완료" else message, Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, if (wasEnd) "종료 매크로까지 완료" else message, Toast.LENGTH_SHORT).show()
         }
     }
 
-    /** 종결 매크로를 임시로 올려 한 번 실행한다. 원래 매크로는 보관했다가 끝나면 되돌린다. */
+    /** 종료 매크로를 임시로 올려 한 번 실행한다. 원래 매크로는 보관했다가 끝나면 되돌린다. */
     private fun startEndPhase(name: String) {
         savedConfig = config
         val endCfg = Store.load(this) // 앱 전체 설정(정지 방법 등)은 그대로 쓰고 포인트/설정만 덮어쓴다
         if (!Store.applyMacro(this, name, endCfg)) {
             stop()
-            Toast.makeText(this, "종결 매크로 '$name'을(를) 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "종료 매크로 '$name'을(를) 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
             return
         }
         endCfg.repeat = 1
         endCfg.sessions.clear()
         endCfg.startDelaySec = 0
-        endCfg.endMacro = "" // 종결 매크로가 또 종결 매크로를 부르지 않게
+        endCfg.endMacro = "" // 종료 매크로가 또 종료 매크로를 부르지 않게
         config = endCfg
         endPhase = true
         rebuildMarkers()
         runBaseAt = SystemClock.uptimeMillis()
         activeRepeat = 1
-        Toast.makeText(this, "종결 매크로 '$name' 실행", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "종료 매크로 '$name' 실행", Toast.LENGTH_SHORT).show()
         beginRun()
     }
 
@@ -1203,7 +1213,7 @@ class ClickService : AccessibilityService() {
         runBaseAt = 0L
         sessionIdx = 0
         if (endPhase) {
-            // 종결 매크로 실행이 끝났으니 원래 매크로로 되돌린다
+            // 종료 매크로 실행이 끝났으니 원래 매크로로 되돌린다
             savedConfig?.let { config = it }
             savedConfig = null
             endPhase = false
