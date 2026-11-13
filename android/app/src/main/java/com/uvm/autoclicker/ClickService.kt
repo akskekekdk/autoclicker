@@ -32,6 +32,14 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import android.os.Build
 import android.widget.Toast
 import kotlin.math.abs
 import kotlin.random.Random
@@ -47,6 +55,9 @@ class ClickService : AccessibilityService() {
             private set
 
         private const val MARKER_DP = 48
+        private const val NOTIF_CHANNEL = "autoclicker_run"
+        private const val NOTIF_ID = 1001
+        private const val ACTION_STOP = "com.uvm.autoclicker.STOP"
         /** 터치 감지층에서 터치 위치마다 비워 두는 구멍 크기 */
         private const val HOLE_DP = 24
         /** 한 제스처로 묶어 보내는 터치 수와 묶음 길이 상한 (정지 반응 속도와의 균형) */
@@ -137,6 +148,8 @@ class ClickService : AccessibilityService() {
         instance = this
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         config = Store.load(this)
+        registerReceiver(stopReceiver, IntentFilter(ACTION_STOP),
+            if (Build.VERSION.SDK_INT >= 33) Context.RECEIVER_NOT_EXPORTED else 0)
         showPanel()
     }
 
@@ -145,6 +158,8 @@ class ClickService : AccessibilityService() {
     override fun onInterrupt() = stop()
 
     override fun onDestroy() {
+        try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
+        hideRunNotification()
         if (::wm.isInitialized) hidePanel()
         instance = null
         super.onDestroy()
@@ -1044,6 +1059,7 @@ class ClickService : AccessibilityService() {
             return
         }
         running = true
+        showRunNotification()
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
         setKeepScreenOn(true) // 화면이 꺼지면 자동 터치가 멈추므로 실행(과 대기) 중에는 켜 둔다
@@ -1242,6 +1258,45 @@ class ClickService : AccessibilityService() {
         wakeLock = null
     }
 
+    /** 실행 중 '정지' 버튼이 있는 알림을 띄운다 (원격 조종 등 화면 버튼을 못 누를 때 대비). */
+    private fun showRunNotification() {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(
+                NotificationChannel(NOTIF_CHANNEL, "오토 클리커", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+        val flags = if (Build.VERSION.SDK_INT >= 31)
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        else PendingIntent.FLAG_UPDATE_CURRENT
+        val stopPi = PendingIntent.getBroadcast(this, 1, Intent(ACTION_STOP).setPackage(packageName), flags)
+        val openPi = PendingIntent.getActivity(
+            this, 2, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), flags
+        )
+        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, NOTIF_CHANNEL)
+        else @Suppress("DEPRECATION") Notification.Builder(this)
+        val n = builder
+            .setSmallIcon(android.R.drawable.ic_media_pause)
+            .setContentTitle("오토 클리커 실행 중")
+            .setContentText("알림의 '정지'를 누르면 멈춥니다")
+            .setOngoing(true)
+            .setContentIntent(openPi)
+            .addAction(Notification.Action.Builder(null, "정지", stopPi).build())
+            .build()
+        nm.notify(NOTIF_ID, n)
+    }
+
+    private fun hideRunNotification() {
+        getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID)
+    }
+
+    /** 알림의 '정지' 버튼이 보내는 방송을 받아 멈춘다. */
+    private val stopReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_STOP) stop()
+        }
+    }
+
     private fun setKeepScreenOn(on: Boolean) {
         val view = panel ?: return
         panelParams.flags = if (on) {
@@ -1255,6 +1310,7 @@ class ClickService : AccessibilityService() {
     fun stop() {
         if (!running) return
         running = false
+        hideRunNotification()
         handler.removeCallbacksAndMessages(null)
         removeTouchCatchers()
         setKeepScreenOn(false)

@@ -241,6 +241,11 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
         config = Store.load(this)
         repeatEdit.setText(config.repeat.toString())
         loopDelayEdit.setText(config.loopDelayMs.toString())
