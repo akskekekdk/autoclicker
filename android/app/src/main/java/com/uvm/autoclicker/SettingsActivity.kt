@@ -48,6 +48,7 @@ class SettingsActivity : Activity() {
     private var config = Config()
     private lateinit var defaultDelayEdit: EditText
     private lateinit var stopModeGroup: RadioGroup
+    private lateinit var highlightCheck: CheckBox
     private lateinit var tapDurationEdit: EditText
     private val delayEdits = mutableListOf<EditText>()
     private val tapsEdits = mutableListOf<EditText>()
@@ -164,6 +165,8 @@ class SettingsActivity : Activity() {
             })
         }
         root.addView(stopModeGroup)
+        highlightCheck = CheckBox(this).apply { text = "실행 중 포인트 강조 표시 (끄면 깜빡임 없음)" }
+        root.addView(highlightCheck)
 
         root.addView(title("4. 포인트별 대기 시간 / 터치 횟수"))
         pointsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -265,6 +268,7 @@ class SettingsActivity : Activity() {
             val rb = stopModeGroup.getChildAt(i) as RadioButton
             if (rb.tag == config.stopMode) rb.isChecked = true
         }
+        highlightCheck.isChecked = config.highlightRun
         tapDurationEdit.setText(config.tapDurationMs.toString())
         renderPoints()
         renderStatus()
@@ -443,6 +447,7 @@ class SettingsActivity : Activity() {
         latest.defaultDelayMs = defaultDelay
         latest.stopMode = (stopModeGroup.findViewById<RadioButton>(stopModeGroup.checkedRadioButtonId)?.tag as? StopMode)
             ?: StopMode.ANY_TOUCH
+        latest.highlightRun = highlightCheck.isChecked
         latest.tapDurationMs = tapDuration
         Store.save(this, latest)
         config = latest

@@ -1617,12 +1617,14 @@ class ClickService : AccessibilityService() {
         // 마지막으로 실제 실행한 동작이 끝난 뒤부터 이번 묶음이 끝날 때까지 남은 시간
         val waitAfter = t - lastStrokeEnd
 
-        highlights.forEach { (at, i) ->
-            handler.postDelayed({
-                if (running) markers.forEachIndexed { k, m ->
-                    m.view.background = markerBackground(k == i, config.points[k].scheduled, config.points[k].ending)
-                }
-            }, at)
+        if (config.highlightRun) {
+            highlights.forEach { (at, i) ->
+                handler.postDelayed({
+                    if (running) markers.forEachIndexed { k, m ->
+                        m.view.background = markerBackground(k == i, config.points[k].scheduled, config.points[k].ending)
+                    }
+                }, at)
+            }
         }
         val afterBatch = {
             if (running) {

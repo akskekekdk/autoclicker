@@ -91,6 +91,8 @@ data class Config(
     var sessions: MutableList<RunSession> = mutableListOf(),
     /** 예약/시작 대기 중 게임이 끊기지 않도록 이 간격(초)마다 1번 포인트를 한 번 터치. 0 = 끔 */
     var keepAliveSec: Int = 0,
+    /** 실행 중 지금 누르는 포인트를 초록으로 강조 표시 (빠른 연타에서 깜빡여 보일 수 있음) */
+    var highlightRun: Boolean = true,
 )
 
 object Store {
@@ -206,6 +208,7 @@ object Store {
                 }
             },
             o.optInt("keepAliveSec", 0).coerceAtLeast(0),
+            o.optBoolean("highlightRun", true),
         )
     }
 
@@ -238,5 +241,6 @@ object Store {
                 cfg.sessions.forEach { put(JSONObject().put("startSec", it.startSec).put("repeats", it.repeats)) }
             })
             .put("keepAliveSec", cfg.keepAliveSec)
+            .put("highlightRun", cfg.highlightRun)
     }
 }
