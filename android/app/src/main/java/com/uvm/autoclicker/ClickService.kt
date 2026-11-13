@@ -144,6 +144,8 @@ class ClickService : AccessibilityService() {
     private var cycle = 0
     /** 입력(정지 버튼 등)이 반드시 들어갈 틈을 만들기 위한 주기적 쉼 기준 시각 */
     private var lastBreatheAt = 0L
+    /** 실행 시작 시각 (볼륨 변경 감지의 초기 오작동 방지용) */
+    private var runStartedAt = 0L
 
     private val markerPx by lazy { dp(MARKER_DP) }
 
@@ -155,6 +157,8 @@ class ClickService : AccessibilityService() {
         config = Store.load(this)
         registerReceiver(stopReceiver, IntentFilter(ACTION_STOP),
             if (Build.VERSION.SDK_INT >= 33) Context.RECEIVER_NOT_EXPORTED else 0)
+        // 볼륨 값이 바뀌면(원격 앱의 소프트웨어 볼륨 포함) 정지 — 하드웨어 볼륨 키가 안 잡힐 때 대비
+        registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
         showPanel()
     }
 
@@ -176,6 +180,7 @@ class ClickService : AccessibilityService() {
 
     override fun onDestroy() {
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(volumeReceiver) } catch (_: Exception) {}
         hideRunNotification()
         if (::wm.isInitialized) hidePanel()
         instance = null
@@ -1085,7 +1090,8 @@ class ClickService : AccessibilityService() {
             return
         }
         running = true
-        lastBreatheAt = SystemClock.uptimeMillis()
+        runStartedAt = SystemClock.uptimeMillis()
+        lastBreatheAt = runStartedAt
         showRunNotification()
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
@@ -1318,6 +1324,21 @@ class ClickService : AccessibilityService() {
     }
 
     /** 알림의 '정지' 버튼이 보내는 방송을 받아 멈춘다. */
+    /** 볼륨이 바뀌면 정지 (실행 시작 직후 잠깐은 무시해 오작동 방지). */
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (!running || intent?.action != "android.media.VOLUME_CHANGED_ACTION") return
+            val newV = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
+            val prevV = intent.getIntExtra("android.media.EXTRA_PREV_VOLUME_STREAM_VALUE", -1)
+            if (newV >= 0 && prevV >= 0 && newV != prevV &&
+                SystemClock.uptimeMillis() - runStartedAt > 800
+            ) {
+                stop()
+                Toast.makeText(this@ClickService, "볼륨 변경으로 정지했습니다", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private val stopReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ACTION_STOP) stop()
