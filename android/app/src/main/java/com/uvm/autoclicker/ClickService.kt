@@ -65,6 +65,9 @@ class ClickService : AccessibilityService() {
         private const val BATCH_WINDOW_MS = 80L
         /** 연타가 아주 빠를 때도 실제 터치(정지 버튼)가 들어오도록 묶음 사이에 최소로 쉬는 시간 */
         private const val MIN_BATCH_GAP_MS = 20L
+        /** 이 시간마다 한 번씩 더 길게 쉬어 입력이 들어갈 틈을 준다 */
+        private const val BREATHE_EVERY_MS = 350L
+        private const val BREATHE_PAUSE_MS = 60L
         /**
          * 정지 후 이 시간 동안은 마커가 터치를 받지 않는다. 이미 보낸 묶음의 남은 터치가
          * 마커에 닿아 설정 창이 열리는 것을 막는다 (묶음 길이 + 여유).
@@ -139,6 +142,8 @@ class ClickService : AccessibilityService() {
     /** 지금 종결 패스(전체 반복 뒤 종결 포인트 실행)를 하는 중인가 */
     private var endingPass = false
     private var cycle = 0
+    /** 입력(정지 버튼 등)이 반드시 들어갈 틈을 만들기 위한 주기적 쉼 기준 시각 */
+    private var lastBreatheAt = 0L
 
     private val markerPx by lazy { dp(MARKER_DP) }
 
@@ -1080,6 +1085,7 @@ class ClickService : AccessibilityService() {
             return
         }
         running = true
+        lastBreatheAt = SystemClock.uptimeMillis()
         showRunNotification()
         playBtn.text = buttonText("■", "정지")
         setMarkersTouchable(false)
@@ -1650,7 +1656,13 @@ class ClickService : AccessibilityService() {
             handler.postDelayed({ afterBatch() }, t)
             return
         }
-        val nextGap = waitAfter.coerceAtLeast(MIN_BATCH_GAP_MS)
+        var nextGap = waitAfter.coerceAtLeast(MIN_BATCH_GAP_MS)
+        // 아주 빠른 연타에서도 실제 터치(정지 버튼)가 들어가도록, 주기적으로 한 번씩 더 길게 쉰다
+        val nowMs = SystemClock.uptimeMillis()
+        if (nowMs - lastBreatheAt >= BREATHE_EVERY_MS) {
+            lastBreatheAt = nowMs
+            nextGap = nextGap.coerceAtLeast(BREATHE_PAUSE_MS)
+        }
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
                 if (!running) return
