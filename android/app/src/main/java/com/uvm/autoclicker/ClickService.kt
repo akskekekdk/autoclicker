@@ -157,6 +157,18 @@ class ClickService : AccessibilityService() {
 
     override fun onInterrupt() = stop()
 
+    // 볼륨 키로 언제든 정지 (연타가 빨라 화면 터치가 안 먹힐 때도 동작). 이벤트는 소비하지 않아 볼륨도 평소대로 조절된다.
+    override fun onKeyEvent(event: android.view.KeyEvent?): Boolean {
+        if (running && event?.action == android.view.KeyEvent.ACTION_DOWN &&
+            (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
+                event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN)
+        ) {
+            stop()
+            Toast.makeText(this, "볼륨 키로 정지했습니다", Toast.LENGTH_SHORT).show()
+        }
+        return false
+    }
+
     override fun onDestroy() {
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
         hideRunNotification()
