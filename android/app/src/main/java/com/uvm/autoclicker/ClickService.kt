@@ -50,8 +50,10 @@ class ClickService : AccessibilityService() {
         /** 터치 감지층에서 터치 위치마다 비워 두는 구멍 크기 */
         private const val HOLE_DP = 24
         /** 한 제스처로 묶어 보내는 터치 수와 묶음 길이 상한 (정지 반응 속도와의 균형) */
-        private const val MAX_BATCH_STROKES = 20
-        private const val BATCH_WINDOW_MS = 300L
+        private const val MAX_BATCH_STROKES = 8
+        private const val BATCH_WINDOW_MS = 120L
+        /** 연타가 아주 빠를 때도 실제 터치(정지 버튼)가 들어오도록 묶음 사이에 최소로 쉬는 시간 */
+        private const val MIN_BATCH_GAP_MS = 12L
         /**
          * 정지 후 이 시간 동안은 마커가 터치를 받지 않는다. 이미 보낸 묶음의 남은 터치가
          * 마커에 닿아 설정 창이 열리는 것을 막는다 (묶음 길이 + 여유).
@@ -1569,10 +1571,11 @@ class ClickService : AccessibilityService() {
             handler.postDelayed({ afterBatch() }, t)
             return
         }
+        val nextGap = waitAfter.coerceAtLeast(MIN_BATCH_GAP_MS)
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
                 if (!running) return
-                handler.postDelayed({ afterBatch() }, waitAfter)
+                handler.postDelayed({ afterBatch() }, nextGap)
             }
 
             override fun onCancelled(g: GestureDescription?) {
@@ -1581,7 +1584,7 @@ class ClickService : AccessibilityService() {
                 if (config.stopMode == StopMode.ANY_TOUCH) {
                     stopByTouch()
                 } else {
-                    handler.postDelayed({ afterBatch() }, waitAfter)
+                    handler.postDelayed({ afterBatch() }, nextGap)
                 }
             }
         }
