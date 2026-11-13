@@ -61,10 +61,10 @@ class ClickService : AccessibilityService() {
         /** 터치 감지층에서 터치 위치마다 비워 두는 구멍 크기 */
         private const val HOLE_DP = 24
         /** 한 제스처로 묶어 보내는 터치 수와 묶음 길이 상한 (정지 반응 속도와의 균형) */
-        private const val MAX_BATCH_STROKES = 8
-        private const val BATCH_WINDOW_MS = 120L
+        private const val MAX_BATCH_STROKES = 5
+        private const val BATCH_WINDOW_MS = 80L
         /** 연타가 아주 빠를 때도 실제 터치(정지 버튼)가 들어오도록 묶음 사이에 최소로 쉬는 시간 */
-        private const val MIN_BATCH_GAP_MS = 12L
+        private const val MIN_BATCH_GAP_MS = 20L
         /**
          * 정지 후 이 시간 동안은 마커가 터치를 받지 않는다. 이미 보낸 묶음의 남은 터치가
          * 마커에 닿아 설정 창이 열리는 것을 막는다 (묶음 길이 + 여유).
@@ -290,6 +290,15 @@ class ClickService : AccessibilityService() {
         }
         handleView = handle
         playBtn = panelButton("▶", "시작") { toggle() }
+        // 연타 중 정지 버튼이 더 잘 먹히도록, 실행 중에는 누르는 순간(ACTION_DOWN) 바로 멈춘다
+        playBtn.setOnTouchListener { _, e ->
+            if (running && e.actionMasked == MotionEvent.ACTION_DOWN) {
+                stop()
+                true
+            } else {
+                false
+            }
+        }
         infoText = TextView(this).apply {
             textSize = 10f
             gravity = Gravity.CENTER
