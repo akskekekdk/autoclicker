@@ -619,9 +619,34 @@ class ClickService : AccessibilityService() {
             advancedBox.visibility = View.VISIBLE
             advancedToggle.text = "고급 설정 (그룹·예약) ▴"
         }
+        var curIndex = index
+        var dialogRef: AlertDialog? = null
+        val orderLabel = TextView(theme).apply {
+            text = "순서: ${curIndex + 1}번 / 전체 ${config.points.size}개"
+            setPadding(0, dp(4), 0, dp(2))
+        }
+        fun moveBy(delta: Int) {
+            val j = curIndex + delta
+            if (j < 0 || j >= config.points.size) return
+            config.points.removeAt(curIndex)
+            config.points.add(j, point)
+            curIndex = j
+            Store.save(this, config)
+            rebuildMarkers()
+            orderLabel.text = "순서: ${curIndex + 1}번 / 전체 ${config.points.size}개"
+            dialogRef?.setTitle("${curIndex + 1}번 포인트")
+        }
+        val orderRow = LinearLayout(theme).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(android.widget.Button(theme).apply { text = "◀ 앞으로"; setOnClickListener { moveBy(-1) } })
+            addView(android.widget.Button(theme).apply { text = "뒤로 ▶"; setOnClickListener { moveBy(1) } })
+        }
         val box = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), 0)
+            addView(orderLabel)
+            addView(orderRow)
             addView(label("동작"))
             addView(actionGroup)
             addView(swipeBox)
@@ -690,6 +715,7 @@ class ClickService : AccessibilityService() {
             }
             .setNegativeButton("취소", null)
             .create()
+        dialogRef = dialog
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         dialog.show()
