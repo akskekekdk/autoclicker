@@ -148,6 +148,9 @@ class ClickService : AccessibilityService() {
     private var tapRepeat = 0
     /** 이번 바퀴에 실행할 포인트 목록: (포인트번호, 실제 터치할지). 그룹·확률이 반영되어 있다. */
     private var cycleSteps: List<Pair<Int, Boolean>> = emptyList()
+    /** cycleSteps 와 같은 길이. 각 단계가 속한 그룹 번호(0=그룹 아님, 1↑=각 묶음 고유번호).
+     *  번호가 바뀌는 지점에서 제스처 묶음을 끊어, 한 그룹이 끝난 뒤 다음 그룹이 시작되게 한다. */
+    private var cycleGroups: List<Int> = emptyList()
     /** 종결 포인트 번호들 */
     private var endingIdx: List<Int> = emptyList()
     /** 지금 종결 패스(전체 반복 뒤 종결 포인트 실행)를 하는 중인가 */
@@ -1314,7 +1317,7 @@ class ClickService : AccessibilityService() {
         mainIdx = config.points.indices.filter { !config.points[it].scheduled && !config.points[it].ending }
         endingIdx = config.points.indices.filter { config.points[it].ending && !config.points[it].scheduled }
         endingPass = false
-        cycleSteps = buildCycleSteps()
+        setCycle(mainIdx)
         initTimers(SystemClock.uptimeMillis())
         // 실행 중에는 마커가 움직이지 않으므로 터치 좌표를 한 번만 계산한다 (상태바/노치 오프셋 보정)
         // 마커 뷰가 아직 배치되지 않았을 수 있으므로(종료 매크로처럼 방금 그린 경우) 저장된 좌표를 바로 쓴다.
@@ -1584,40 +1587,45 @@ class ClickService : AccessibilityService() {
      * 그룹 머리는 확률로 실행 여부를 정하고, 실행되면 묶음 전체를 groupRepeat번 반복한다.
      * 일반 포인트는 확률로 터치 여부를 정하되 시간은 그대로 흐르도록 목록에는 남긴다.
      */
-    private fun buildCycleSteps(): List<Pair<Int, Boolean>> = buildSteps(mainIdx)
-
-    private fun buildSteps(mainIdx: List<Int>): List<Pair<Int, Boolean>> {
-        val out = mutableListOf<Pair<Int, Boolean>>()
+    /** mainIdx(또는 종결 목록)로부터 cycleSteps/cycleGroups 를 다시 만든다. */
+    private fun setCycle(from: List<Int>) {
+        val steps = mutableListOf<Pair<Int, Boolean>>()
+        val groups = mutableListOf<Int>()
         var i = 0
-        while (i < mainIdx.size) {
-            val headPi = mainIdx[i]
+        var gid = 0 // 그룹을 만날 때마다 증가시켜 각 묶음에 고유 번호를 준다
+        while (i < from.size) {
+            val headPi = from[i]
             val head = config.points[headPi]
             val size = head.groupSize.coerceAtLeast(1)
             val groupRep = head.groupRepeat.coerceAtLeast(1)
             // 포인트를 2개 이상 묶었거나(size>1), 한 포인트라도 묶음 반복이 2 이상이면 묶음으로 본다
             if (size > 1 || groupRep > 1) {
-                val block = (i until minOf(i + size, mainIdx.size)).map { mainIdx[it] }
+                val block = (i until minOf(i + size, from.size)).map { from[it] }
+                gid++
                 // 묶음을 groupRep번 반복한다. 머리를 포함한 각 포인트는 자기 확률로 터치 여부를 따로 정한다.
                 repeat(groupRep) {
                     block.forEach { pi ->
                         val c = config.points[pi].chance
-                        out.add(pi to (c >= 100 || Random.nextInt(100) < c))
+                        steps.add(pi to (c >= 100 || Random.nextInt(100) < c))
+                        groups.add(gid)
                     }
                 }
                 i += block.size
             } else {
-                out.add(headPi to (head.chance >= 100 || Random.nextInt(100) < head.chance))
+                steps.add(headPi to (head.chance >= 100 || Random.nextInt(100) < head.chance))
+                groups.add(0) // 그룹이 아닌 단독 포인트
                 i++
             }
         }
-        return out
+        cycleSteps = steps
+        cycleGroups = groups
     }
 
     /** 전체 반복이 끝났을 때. 종결 포인트가 있으면 종결 패스를 시작하고 false, 끝이면 true. */
     private fun reachedEnd(): Boolean {
         if (!endingPass && endingIdx.isNotEmpty()) {
             endingPass = true
-            cycleSteps = buildSteps(endingIdx)
+            setCycle(endingIdx)
             index = 0
             tapRepeat = 0
             return cycleSteps.isEmpty()
@@ -1665,6 +1673,7 @@ class ClickService : AccessibilityService() {
         var lastStrokeEnd = 0L
         var finished = false
         var swipeLead = 0L // 다음 묶음이 밀기로 시작하면, 그 앞에 둘 여유 시간
+        var batchGroup = Int.MIN_VALUE // 이번 묶음이 담고 있는 그룹 번호 (첫 터치가 정해진다)
         while (strokes < maxStrokes && (steps == 0 || t <= windowMs)) {
             // 예약 포인트만 있는 매크로에서 예약 실행이 끝나면 묶음을 마친다
             if (activeTimed < 0 && mainIdx.isEmpty()) break
@@ -1675,7 +1684,7 @@ class ClickService : AccessibilityService() {
                     if (reachedEnd()) { finished = true; break }
                     continue // 종결 패스 시작됨
                 }
-                cycleSteps = buildCycleSteps()
+                setCycle(mainIdx)
                 t += config.loopDelayMs
                 if (cycleSteps.isEmpty()) { t += 200L; break }
                 continue
@@ -1683,6 +1692,11 @@ class ClickService : AccessibilityService() {
             val timed = activeTimed >= 0
             val pi = if (timed) activeTimed else cycleSteps[index].first
             val point0 = config.points[pi]
+            // 그룹 경계에서 묶음을 끊는다: 한 그룹(과 그 반복)이 모두 끝난 뒤에야 다음 그룹이 시작되도록,
+            // 이번 묶음에 담긴 그룹과 다른 그룹이 나오면 여기서 끊어 다음 묶음으로 넘긴다.
+            val stepGroup = if (timed) -1 else cycleGroups.getOrElse(index) { 0 }
+            if (strokes > 0 && stepGroup != batchGroup) break
+            if (strokes == 0) batchGroup = stepGroup
             // 밀기(스크롤)는 앞의 터치와 섞이면 안 먹힐 수 있어, 단독 묶음으로 보낸다.
             // 또 바로 앞 동작 직후엔 화면이 안 정리돼 첫 밀기가 묻히므로, 밀기 앞에 여유를 둔다.
             if (point0.action != Action.TAP && strokes > 0) { swipeLead = SWIPE_LEAD_MS; break }
@@ -1744,7 +1758,7 @@ class ClickService : AccessibilityService() {
                             if (reachedEnd()) finished = true
                         } else {
                             gap += jitter(config.loopDelayMs)
-                            cycleSteps = buildCycleSteps()
+                            setCycle(mainIdx)
                         }
                     }
                 }
