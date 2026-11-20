@@ -1677,6 +1677,9 @@ class ClickService : AccessibilityService() {
             }
             val timed = activeTimed >= 0
             val pi = if (timed) activeTimed else cycleSteps[index].first
+            val point0 = config.points[pi]
+            // 밀기(스크롤)는 앞의 터치와 섞이면 안 먹힐 수 있어, 단독 묶음으로 보낸다
+            if (point0.action != Action.TAP && strokes > 0) break
             val p = targets[pi]
             val point = config.points[pi]
             val path = Path().apply { moveTo(p[0], p[1]) }
@@ -1739,6 +1742,8 @@ class ClickService : AccessibilityService() {
             }
             t += duration + gap
             if (finished) break
+            // 밀기를 넣었으면 여기서 묶음을 끝내 단독으로 보낸다
+            if (point.action != Action.TAP) break
             // 예약 포인트 차례가 되면 묶음을 끊고 다음 묶음에서 실행한다
             if (!timed && dueTimer(now + t) >= 0) break
         }
