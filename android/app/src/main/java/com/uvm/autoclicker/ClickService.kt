@@ -644,6 +644,17 @@ class ClickService : AccessibilityService() {
             gravity = Gravity.CENTER_VERTICAL
             addView(android.widget.Button(theme).apply { text = "◀ 앞으로"; setOnClickListener { moveBy(-1) } })
             addView(android.widget.Button(theme).apply { text = "뒤로 ▶"; setOnClickListener { moveBy(1) } })
+            addView(android.widget.Button(theme).apply {
+                text = "삭제"
+                setOnClickListener {
+                    if (curIndex in config.points.indices) {
+                        config.points.removeAt(curIndex)
+                        Store.save(this@ClickService, config)
+                        rebuildMarkers()
+                    }
+                    dialogRef?.dismiss()
+                }
+            })
         }
         val box = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL

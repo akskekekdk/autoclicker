@@ -66,124 +66,133 @@ class SettingsActivity : Activity() {
         }
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(24))
+            setPadding(dp(14), dp(14), dp(14), dp(28))
+            setBackgroundColor(Color.parseColor("#EEF1F5"))
         }
-        setContentView(ScrollView(this).apply { addView(root) })
-
-        root.addView(title("앱 업데이트"))
-        updateText = text("현재 버전 ${Updater.currentVersionName(this)}")
-        root.addView(updateText)
-        updateBtn = button("업데이트 확인") { onUpdateClicked() }
-        root.addView(updateBtn)
-        root.addView(button("브라우저로 받기") { Updater.openReleasePage(this) })
-
-        root.addView(title("1. 접근성 권한"))
-        root.addView(text(
-            "화면을 대신 터치하려면 접근성 서비스를 켜야 합니다.\n" +
-                "설정 → 접근성 → 설치된 앱 → '오토 클리커' → 사용.\n" +
-                "※ 회색으로 막혀 있으면: 설정 → 앱 → 오토 클리커 → 우측 상단 ⋮ → '제한된 설정 허용' 후 다시 시도하세요."
-        ))
-        statusText = text("").apply { setTypeface(typeface, Typeface.BOLD) }
-        root.addView(statusText)
-        root.addView(button("접근성 설정 열기") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(Color.parseColor("#EEF1F5"))
+            addView(root)
         })
-        panelBtn = button("플로팅 패널 열기") { togglePanel() }
-        root.addView(panelBtn)
 
-        root.addView(title("2. 사용 방법"))
-        root.addView(text(
-            "플로팅 패널\n" +
-                "  ⠿ 끌어서 패널 이동\n" +
-                "  ▶ / ■ 시작 / 정지\n" +
-                "  ＋ 터치 위치 추가 (빨간 원을 원하는 곳으로 끌어다 놓기)\n" +
-                "  빨간 원 탭: 동작(터치/위·아래·좌·우로 밀기), 대기 시간(ms), 반복 횟수, 실행 확률(%), 예약 실행 설정\n" +
-                "  파란 원 = 예약 포인트: 정한 시간에 끼어들어 실행 (⏰ 첫 실행 시각, ↻ 반복)\n" +
-                "  그룹: 원 설정의 고급에서 '그룹 수'를 정하면 이 포인트부터 묶어 확률·반복을 함께 적용 (⊏ 표시)\n" +
-                "  － 마지막 위치 삭제\n" +
-                "  ⏰ 예약 실행 설정 (설정 화면 없이 바로)\n" +
-                "  💾 매크로 저장 / 불러오기 (길게 누르면 삭제)\n" +
-                "  ⚙ 이 설정 화면 열기\n" +
-                "  ⇄ / ⇅ 패널을 가로 / 세로로 바꾸기\n" +
-                "  실행 중 볼륨 버튼(위/아래)을 누르면 언제든 정지됩니다\n" +
-                "  ▲ 접기 / ▼ 펼치기 (같은 버튼을 다시 누르면 펼쳐짐)\n" +
-                "  ✕ 패널 닫기 (앱 아이콘을 누르면 다시 열림)\n" +
-                "번호 순서대로 터치합니다. 각 포인트를 '횟수'만큼 연속 터치하고, 매 터치 후 '대기'만큼 기다립니다."
-        ))
+        // 제목
+        root.addView(TextView(this).apply {
+            text = "오토 클리커 설정"
+            textSize = 22f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#1A237E"))
+            setPadding(dp(4), dp(4), 0, dp(12))
+        })
 
-        root.addView(title("3. 반복 설정"))
-        repeatEdit = numberEdit()
-        loopDelayEdit = numberEdit()
-        startHoursEdit = numberEdit()
-        startMinutesEdit = numberEdit()
-        startSecondsEdit = numberEdit()
-        root.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(TextView(this@SettingsActivity).apply {
-                text = "시작 대기"
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        // 앱 업데이트
+        card("앱 업데이트").apply {
+            updateText = text("현재 버전 ${Updater.currentVersionName(this@SettingsActivity)}")
+            addView(updateText)
+            updateBtn = button("업데이트 확인") { onUpdateClicked() }
+            addView(updateBtn)
+            addView(button("브라우저로 받기") { Updater.openReleasePage(this@SettingsActivity) })
+        }
+
+        // 접근성 권한
+        card("접근성 권한").apply {
+            statusText = text("").apply { setTypeface(typeface, Typeface.BOLD) }
+            addView(statusText)
+            addView(hint(
+                "화면을 대신 터치하려면 접근성 서비스를 켜야 합니다.\n" +
+                    "설정 → 접근성 → 설치된 앱 → '오토 클리커' → 사용.\n" +
+                    "※ 회색으로 막혀 있으면: 앱 정보 → ⋮ → '제한된 설정 허용' 후 다시 시도."
+            ))
+            addView(button("접근성 설정 열기") {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             })
-            listOf(startHoursEdit to "시 ", startMinutesEdit to "분 ", startSecondsEdit to "초").forEach { (e, unit) ->
-                addView(e, LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT))
-                addView(TextView(this@SettingsActivity).apply { text = unit })
+            panelBtn = button("플로팅 패널 열기") { togglePanel() }
+            addView(panelBtn)
+        }
+
+        // 실행 설정
+        card("실행 설정").apply {
+            repeatEdit = numberEdit()
+            loopDelayEdit = numberEdit()
+            addView(row("반복 횟수 (0 = 무한)", repeatEdit))
+            addView(row("반복 사이 대기 (ms)", loopDelayEdit))
+            limitHoursEdit = numberEdit()
+            limitMinutesEdit = numberEdit()
+            addView(hmsLabelRow("실행 시간 제한", listOf(limitHoursEdit to "시간", limitMinutesEdit to "분")))
+            startHoursEdit = numberEdit()
+            startMinutesEdit = numberEdit()
+            startSecondsEdit = numberEdit()
+            addView(hmsLabelRow("시작 대기", listOf(startHoursEdit to "시", startMinutesEdit to "분", startSecondsEdit to "초")))
+            addView(hint("반복 횟수와 실행 시간 중 먼저 끝나는 쪽에서 정지합니다. 시작 대기는 ▶ 뒤 그 시간이 지나야 시작합니다 (0 = 바로). 실행 중에는 화면이 꺼지지 않습니다."))
+        }
+
+        // 속도 / 터치
+        card("속도 · 터치").apply {
+            tapDurationEdit = numberEdit()
+            addView(row("터치 누르는 시간 (ms)", tapDurationEdit))
+            defaultDelayEdit = numberEdit()
+            addView(row("첫 포인트 기본 대기 (ms)", defaultDelayEdit))
+            maxSpeedCheck = CheckBox(this@SettingsActivity).apply { text = "최고 속도 모드 (더 빠름 · 정지 버튼 느려짐)" }
+            addView(maxSpeedCheck)
+            addView(hint("터치 누르는 시간이 작을수록 연타가 빨라집니다. 가끔 안 먹히면 50~100으로 늘리세요. 최고 속도 모드에서는 볼륨 키로 정지하세요."))
+        }
+
+        // 정지 · 표시
+        card("정지 · 표시").apply {
+            addView(text("정지 방법").apply { setTypeface(typeface, Typeface.BOLD) })
+            stopModeGroup = RadioGroup(this@SettingsActivity)
+            StopMode.entries.forEach { mode ->
+                stopModeGroup.addView(RadioButton(this@SettingsActivity).apply {
+                    id = View.generateViewId()
+                    text = mode.label
+                    tag = mode
+                })
             }
-        })
-        root.addView(text("▶을 누르고 이 시간이 지난 뒤 매크로 전체를 시작합니다 (0 = 바로). 기다리는 동안 패널에 남은 시간이 보이고 ■로 취소할 수 있습니다."))
-
-        root.addView(title("예약 세션 (여러 시간에 나눠 실행)"))
-        root.addView(text("▶을 누른 시점 기준으로, 정한 시간마다 매크로 전체를 '횟수'만큼 실행합니다. 예: 3시간 뒤 10회, 5시간 15분 뒤 5회. 한 줄이라도 있으면 위의 '시작 대기'는 무시됩니다."))
-        sessionsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(sessionsBox)
-        root.addView(button("세션 추가") { addSessionRow(0, 0, 0, 1); })
-        keepAliveEdit = numberEdit()
-        root.addView(row("대기 중 유지 탭 간격 (초, 0 = 끔)", keepAliveEdit))
-        root.addView(text("예약/시작 대기 동안 이 간격마다 1번 포인트를 한 번 눌러 게임이 끊기는 것을 막습니다. 1번 포인트는 눌러도 안전한 빈 곳에 두세요. (모든 매크로 공통 · 패널 ⏰에서도 설정 가능)"))
-        root.addView(row("반복 횟수 (0 = 무한)", repeatEdit))
-        root.addView(row("반복 사이 대기 (ms)", loopDelayEdit))
-        limitHoursEdit = numberEdit()
-        limitMinutesEdit = numberEdit()
-        root.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(TextView(this@SettingsActivity).apply {
-                text = "실행 시간 제한 (0 = 없음)"
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(limitHoursEdit, LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.WRAP_CONTENT))
-            addView(TextView(this@SettingsActivity).apply { text = "시간 " })
-            addView(limitMinutesEdit, LinearLayout.LayoutParams(dp(56), LinearLayout.LayoutParams.WRAP_CONTENT))
-            addView(TextView(this@SettingsActivity).apply { text = "분" })
-        })
-        root.addView(text("반복 횟수와 실행 시간 중 먼저 도달하는 쪽에서 정지합니다. 실행 중에는 화면이 꺼지지 않습니다."))
-        defaultDelayEdit = numberEdit()
-        root.addView(row("첫 포인트 기본 대기 (ms)", defaultDelayEdit))
-        root.addView(text("＋로 추가하는 포인트는 마지막 포인트의 대기 시간과 반복 횟수를 이어받습니다."))
-        tapDurationEdit = numberEdit()
-        root.addView(row("터치 누르는 시간 (ms)", tapDurationEdit))
-        root.addView(text("작을수록 연타가 빨라집니다. 터치가 가끔 안 먹히면 50~100으로 늘려보세요."))
-        root.addView(title("정지 방법"))
-        stopModeGroup = RadioGroup(this)
-        StopMode.entries.forEach { mode ->
-            stopModeGroup.addView(RadioButton(this).apply {
-                id = View.generateViewId()
-                text = mode.label
-                tag = mode
-            })
+            addView(stopModeGroup)
+            highlightCheck = CheckBox(this@SettingsActivity).apply { text = "실행 중 포인트 강조 표시 (끄면 깜빡임 없음)" }
+            addView(highlightCheck)
+            addView(hint("실행 중 볼륨 버튼(또는 볼륨 변경)으로 언제든 정지할 수 있습니다."))
         }
-        root.addView(stopModeGroup)
-        highlightCheck = CheckBox(this).apply { text = "실행 중 포인트 강조 표시 (끄면 깜빡임 없음)" }
-        root.addView(highlightCheck)
-        maxSpeedCheck = CheckBox(this).apply { text = "최고 속도 모드 (더 빠르게 · 정지 버튼 느려짐, 볼륨 키로 정지)" }
-        root.addView(maxSpeedCheck)
 
-        root.addView(title("4. 포인트별 대기 시간 / 터치 횟수"))
-        pointsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(pointsBox)
+        // 예약 세션
+        card("예약 세션").apply {
+            addView(hint("▶을 누른 시점 기준으로 정한 시간마다 매크로 전체를 '횟수'만큼 실행합니다. 예: 3시간 뒤 10회. 세션이 있으면 '시작 대기'는 무시됩니다."))
+            sessionsBox = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
+            addView(sessionsBox)
+            addView(button("세션 추가") { addSessionRow(0, 0, 0, 1) })
+            keepAliveEdit = numberEdit()
+            addView(row("대기 중 유지 탭 간격 (초, 0 = 끔)", keepAliveEdit))
+            addView(hint("대기 동안 이 간격마다 1번 포인트를 눌러 게임이 끊기는 것을 막습니다. 1번 포인트는 빈 곳에 두세요. (모든 매크로 공통)"))
+        }
 
-        root.addView(button("저장") {
+        // 포인트 목록
+        card("포인트 목록").apply {
+            addView(hint("각 포인트의 대기 시간과 연속 터치 횟수. 위치·동작·순서는 화면의 원을 탭해서 바꾸세요."))
+            pointsBox = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
+            addView(pointsBox)
+        }
+
+        // 저장
+        root.addView(button("설정 저장") {
             if (save()) Toast.makeText(this, "저장했습니다", Toast.LENGTH_SHORT).show()
+        }.apply {
+            setBackgroundColor(Color.parseColor("#3D5AFE"))
+            setTextColor(Color.WHITE)
+            textSize = 16f
         })
+
+        // 사용 방법 (맨 아래)
+        card("사용 방법").apply {
+            addView(hint(
+                "플로팅 패널 버튼\n" +
+                    "  ⠿ 끌어서 이동   ▶/■ 시작/정지\n" +
+                    "  ＋ 포인트 추가 (빨간 원을 원하는 곳으로)\n" +
+                    "  － 마지막 포인트 삭제\n" +
+                    "  🔁 전체 반복 횟수   ⏰ 예약   💾 매크로 저장/불러오기\n" +
+                    "  ⚙ 설정   ⇄/⇅ 가로·세로   ▲/▼ 접기·펼치기   ✕ 닫기\n" +
+                    "빨간 원 탭: 순서(◀▶)·삭제·동작·대기·횟수·확률·그룹·예약·종결 설정.\n" +
+                    "검정 원 = 종결/종료: 전체 반복이 끝난 뒤 한 번 실행.\n" +
+                    "번호 순서대로, 각 포인트를 '횟수'만큼 누르고 매 터치 후 '대기'만큼 기다립니다."
+            ))
+        }
 
         checkUpdate()
     }
@@ -462,6 +471,53 @@ class SettingsActivity : Activity() {
     }
 
     // ------------------------------------------------------------- widgets
+    /** 섹션 카드를 만들어 root에 추가하고 반환한다. */
+    private fun card(titleText: String): LinearLayout {
+        val header = TextView(this).apply {
+            text = titleText
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Color.parseColor("#3D5AFE"))
+            setPadding(0, 0, 0, dp(8))
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = dp(14).toFloat()
+            }
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+            addView(header)
+        }
+        root.addView(box)
+        return box
+    }
+
+    /** 카드 안의 설명(회색 작은 글씨). */
+    private fun hint(s: String) = TextView(this).apply {
+        text = s
+        textSize = 13f
+        setTextColor(Color.parseColor("#777777"))
+        setPadding(0, dp(4), 0, dp(2))
+    }
+
+    /** '라벨  [입력]단위 [입력]단위' 한 줄. */
+    private fun hmsLabelRow(label: String, fields: List<Pair<EditText, String>>) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(TextView(this@SettingsActivity).apply {
+            text = label
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        fields.forEach { (e, unit) ->
+            addView(e, LinearLayout.LayoutParams(dp(46), LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(TextView(this@SettingsActivity).apply { text = " $unit " })
+        }
+    }
+
     private fun title(s: String) = TextView(this).apply {
         text = s
         textSize = 18f
