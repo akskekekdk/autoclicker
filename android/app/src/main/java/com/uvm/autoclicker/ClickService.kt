@@ -1712,26 +1712,10 @@ class ClickService : AccessibilityService() {
             val doTap = if (timed) point.chance >= 100 || Random.nextInt(100) < point.chance
                         else cycleSteps[index].second
             if (doTap) {
-                if (point.action != Action.TAP && android.os.Build.VERSION.SDK_INT >= 26) {
-                    // 밀기: 시작점을 잠깐 눌렀다가(목록이 손가락을 잡도록) 끌어서 더 확실히 스크롤.
-                    // 끌기 경로는 반드시 꾹 누르기가 끝난 바로 그 지점에서 시작해야 continueStroke 가
-                    // 취소되지 않는다. 그래서 꾹 누르기를 목적지 방향으로 1px만 움직여 끝점을 맞춘다.
-                    val len = kotlin.math.hypot((destX - p[0]).toDouble(), (destY - p[1]).toDouble()).toFloat()
-                    val nx = if (len > 0f) (destX - p[0]) / len else 0f
-                    val ny = if (len > 0f) (destY - p[1]) / len else 1f
-                    val midX = p[0] + nx
-                    val midY = p[1] + ny
-                    val downPath = Path().apply { moveTo(p[0], p[1]); lineTo(midX, midY) }
-                    val dragPath = Path().apply { moveTo(midX, midY); lineTo(destX, destY) }
-                    val dwell = GestureDescription.StrokeDescription(downPath, t, SWIPE_DWELL_MS, true)
-                    val drag = dwell.continueStroke(dragPath, t + SWIPE_DWELL_MS, duration, false)
-                    builder.addStroke(dwell)
-                    builder.addStroke(drag)
-                    lastStrokeEnd = t + SWIPE_DWELL_MS + duration
-                } else {
-                    builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
-                    lastStrokeEnd = t + duration
-                }
+                // 밀기는 매끄러운 단일 제스처로 보낸다. (꾹 누르면 게임이 "길게 누르기"로
+                // 인식해 스크롤이 아니라 선택이 되어버리므로, 멈춤 없이 끌어야 스크롤이 된다.)
+                builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
+                lastStrokeEnd = t + duration
                 highlights.add(t to pi)
                 strokes++
             }
@@ -1765,9 +1749,7 @@ class ClickService : AccessibilityService() {
                     }
                 }
             }
-            // 밀기는 시작 전 꾹 누르는 시간도 포함해 다음 대기를 계산한다
-            val lead = if (point.action != Action.TAP && android.os.Build.VERSION.SDK_INT >= 26) SWIPE_DWELL_MS else 0L
-            t += lead + duration + gap
+            t += duration + gap
             if (finished) break
             // 밀기를 넣었으면 여기서 묶음을 끝내 단독으로 보낸다
             if (point.action != Action.TAP) break
