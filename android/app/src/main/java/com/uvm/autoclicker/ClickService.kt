@@ -72,6 +72,8 @@ class ClickService : AccessibilityService() {
         private const val FIRST_TAP_DELAY_MS = 150L
         /** 밀기(스크롤) 직전에 두는 여유 (앞 동작이 끝나고 화면이 정리될 시간) */
         private const val SWIPE_LEAD_MS = 120L
+        /** 밀기 전 시작점을 꾹 누르는 시간 (목록이 손가락을 잡도록) */
+        private const val SWIPE_DWELL_MS = 80L
         /** 최고 속도 모드: 더 많은 터치를 한 묶음에, 더 긴 창으로 */
         private const val MAX_BATCH_STROKES_FAST = 60
         private const val BATCH_WINDOW_FAST_MS = 1000L
@@ -1709,10 +1711,20 @@ class ClickService : AccessibilityService() {
             val doTap = if (timed) point.chance >= 100 || Random.nextInt(100) < point.chance
                         else cycleSteps[index].second
             if (doTap) {
-                builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
+                if (point.action != Action.TAP && android.os.Build.VERSION.SDK_INT >= 26) {
+                    // 밀기: 시작점을 잠깐 눌렀다가(목록이 손가락을 잡도록) 끌어서 더 확실히 스크롤
+                    val downPath = Path().apply { moveTo(p[0], p[1]); lineTo(p[0], p[1] + 1f) }
+                    val dwell = GestureDescription.StrokeDescription(downPath, t, SWIPE_DWELL_MS, true)
+                    val drag = dwell.continueStroke(path, t + SWIPE_DWELL_MS, duration, false)
+                    builder.addStroke(dwell)
+                    builder.addStroke(drag)
+                    lastStrokeEnd = t + SWIPE_DWELL_MS + duration
+                } else {
+                    builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
+                    lastStrokeEnd = t + duration
+                }
                 highlights.add(t to pi)
                 strokes++
-                lastStrokeEnd = t + duration
             }
             steps++
             var gap = jitter(point.delayMs)
@@ -1744,7 +1756,9 @@ class ClickService : AccessibilityService() {
                     }
                 }
             }
-            t += duration + gap
+            // 밀기는 시작 전 꾹 누르는 시간도 포함해 다음 대기를 계산한다
+            val lead = if (point.action != Action.TAP && android.os.Build.VERSION.SDK_INT >= 26) SWIPE_DWELL_MS else 0L
+            t += lead + duration + gap
             if (finished) break
             // 밀기를 넣었으면 여기서 묶음을 끝내 단독으로 보낸다
             if (point.action != Action.TAP) break
