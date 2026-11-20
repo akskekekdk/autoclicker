@@ -68,6 +68,9 @@ class ClickService : AccessibilityService() {
         /** 이 시간마다 한 번씩 더 길게 쉬어 입력이 들어갈 틈을 준다 */
         private const val BREATHE_EVERY_MS = 350L
         private const val BREATHE_PAUSE_MS = 60L
+        /** 최고 속도 모드: 더 많은 터치를 한 묶음에, 더 긴 창으로 */
+        private const val MAX_BATCH_STROKES_FAST = 60
+        private const val BATCH_WINDOW_FAST_MS = 1000L
         /**
          * 정지 후 이 시간 동안은 마커가 터치를 받지 않는다. 이미 보낸 묶음의 남은 터치가
          * 마커에 닿아 설정 창이 열리는 것을 막는다 (묶음 길이 + 여유).
@@ -1585,7 +1588,9 @@ class ClickService : AccessibilityService() {
             }
             return
         }
-        val maxStrokes = minOf(MAX_BATCH_STROKES, GestureDescription.getMaxStrokeCount())
+        val wantStrokes = if (config.maxSpeed) MAX_BATCH_STROKES_FAST else MAX_BATCH_STROKES
+        val maxStrokes = minOf(wantStrokes, GestureDescription.getMaxStrokeCount())
+        val windowMs = if (config.maxSpeed) BATCH_WINDOW_FAST_MS else BATCH_WINDOW_MS
         val tapMs = config.tapDurationMs
         val builder = GestureDescription.Builder()
         val highlights = mutableListOf<Pair<Long, Int>>()
@@ -1594,7 +1599,7 @@ class ClickService : AccessibilityService() {
         var strokes = 0
         var lastStrokeEnd = 0L
         var finished = false
-        while (strokes < maxStrokes && (steps == 0 || t <= BATCH_WINDOW_MS)) {
+        while (strokes < maxStrokes && (steps == 0 || t <= windowMs)) {
             // 예약 포인트만 있는 매크로에서 예약 실행이 끝나면 묶음을 마친다
             if (activeTimed < 0 && mainIdx.isEmpty()) break
             // 이번 바퀴에 실행할 게 하나도 없으면(그룹이 모두 건너뜀 등) 바퀴만 넘긴다
@@ -1703,12 +1708,14 @@ class ClickService : AccessibilityService() {
             handler.postDelayed({ afterBatch() }, t)
             return
         }
-        var nextGap = waitAfter.coerceAtLeast(MIN_BATCH_GAP_MS)
-        // 아주 빠른 연타에서도 실제 터치(정지 버튼)가 들어가도록, 주기적으로 한 번씩 더 길게 쉰다
-        val nowMs = SystemClock.uptimeMillis()
-        if (nowMs - lastBreatheAt >= BREATHE_EVERY_MS) {
-            lastBreatheAt = nowMs
-            nextGap = nextGap.coerceAtLeast(BREATHE_PAUSE_MS)
+        var nextGap = if (config.maxSpeed) waitAfter else waitAfter.coerceAtLeast(MIN_BATCH_GAP_MS)
+        // 최고 속도 모드가 아니면, 실제 터치(정지 버튼)가 들어가도록 주기적으로 한 번 더 길게 쉰다
+        if (!config.maxSpeed) {
+            val nowMs = SystemClock.uptimeMillis()
+            if (nowMs - lastBreatheAt >= BREATHE_EVERY_MS) {
+                lastBreatheAt = nowMs
+                nextGap = nextGap.coerceAtLeast(BREATHE_PAUSE_MS)
+            }
         }
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {

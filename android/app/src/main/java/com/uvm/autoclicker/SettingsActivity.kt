@@ -49,6 +49,7 @@ class SettingsActivity : Activity() {
     private lateinit var defaultDelayEdit: EditText
     private lateinit var stopModeGroup: RadioGroup
     private lateinit var highlightCheck: CheckBox
+    private lateinit var maxSpeedCheck: CheckBox
     private lateinit var tapDurationEdit: EditText
     private val delayEdits = mutableListOf<EditText>()
     private val tapsEdits = mutableListOf<EditText>()
@@ -173,6 +174,8 @@ class SettingsActivity : Activity() {
         root.addView(stopModeGroup)
         highlightCheck = CheckBox(this).apply { text = "실행 중 포인트 강조 표시 (끄면 깜빡임 없음)" }
         root.addView(highlightCheck)
+        maxSpeedCheck = CheckBox(this).apply { text = "최고 속도 모드 (더 빠르게 · 정지 버튼 느려짐, 볼륨 키로 정지)" }
+        root.addView(maxSpeedCheck)
 
         root.addView(title("4. 포인트별 대기 시간 / 터치 횟수"))
         pointsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -270,6 +273,7 @@ class SettingsActivity : Activity() {
             if (rb.tag == config.stopMode) rb.isChecked = true
         }
         highlightCheck.isChecked = config.highlightRun
+        maxSpeedCheck.isChecked = config.maxSpeed
         tapDurationEdit.setText(config.tapDurationMs.toString())
         renderPoints()
         renderStatus()
@@ -449,6 +453,7 @@ class SettingsActivity : Activity() {
         latest.stopMode = (stopModeGroup.findViewById<RadioButton>(stopModeGroup.checkedRadioButtonId)?.tag as? StopMode)
             ?: StopMode.ANY_TOUCH
         latest.highlightRun = highlightCheck.isChecked
+        latest.maxSpeed = maxSpeedCheck.isChecked
         latest.tapDurationMs = tapDuration
         Store.save(this, latest)
         config = latest

@@ -93,6 +93,8 @@ data class Config(
     var keepAliveSec: Int = 0,
     /** 실행 중 지금 누르는 포인트를 초록으로 강조 표시 (빠른 연타에서 깜빡여 보일 수 있음) */
     var highlightRun: Boolean = true,
+    /** 최고 속도 모드: 속도 제한(묶음 사이 쉼)을 없앤다. 정지 버튼이 느려지니 볼륨 키로 정지 */
+    var maxSpeed: Boolean = false,
 )
 
 object Store {
@@ -209,6 +211,7 @@ object Store {
             },
             o.optInt("keepAliveSec", 0).coerceAtLeast(0),
             o.optBoolean("highlightRun", true),
+            o.optBoolean("maxSpeed", false),
         )
     }
 
@@ -242,5 +245,6 @@ object Store {
             })
             .put("keepAliveSec", cfg.keepAliveSec)
             .put("highlightRun", cfg.highlightRun)
+            .put("maxSpeed", cfg.maxSpeed)
     }
 }
