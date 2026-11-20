@@ -89,6 +89,8 @@ class ClickService : AccessibilityService() {
 
     private var config = Config()
     private val markers = mutableListOf<Marker>()
+    /** 삭제 되돌리기용: 최근에 지운 포인트 (원래 위치, 포인트) */
+    private val deletedStack = ArrayDeque<Pair<Int, ClickPoint>>()
     /** 종료 매크로 포인트의 미리보기 마커(검정, 터치 안 됨) */
     private val previewMarkers = mutableListOf<View>()
 
@@ -324,7 +326,9 @@ class ClickService : AccessibilityService() {
         foldable = listOf(
             playBtn,
             panelButton("＋", "추가") { addPoint() },
-            panelButton("－", "삭제") { removeLastPoint() },
+            panelButton("－", "삭제") { removeLastPoint() }.apply {
+                setOnLongClickListener { undoDelete(); true }
+            },
             panelButton("🔁", "반복") { showRepeatDialog() },
             panelButton("⏰", "예약") { showScheduleDialog() },
             panelButton("💾", "매크로") { showMacroDialog() },
@@ -648,9 +652,10 @@ class ClickService : AccessibilityService() {
                 text = "삭제"
                 setOnClickListener {
                     if (curIndex in config.points.indices) {
-                        config.points.removeAt(curIndex)
+                        pushDeleted(curIndex, config.points.removeAt(curIndex))
                         Store.save(this@ClickService, config)
                         rebuildMarkers()
+                        Toast.makeText(this@ClickService, "삭제됨 (－ 길게 누르면 되돌리기)", Toast.LENGTH_SHORT).show()
                     }
                     dialogRef?.dismiss()
                 }
@@ -844,9 +849,31 @@ class ClickService : AccessibilityService() {
 
     private fun removeLastPoint() {
         if (running || config.points.isEmpty()) return
-        config.points.removeAt(config.points.lastIndex)
+        val i = config.points.lastIndex
+        pushDeleted(i, config.points.removeAt(i))
         Store.save(this, config)
         rebuildMarkers()
+        Toast.makeText(this, "삭제됨 (－ 길게 누르면 되돌리기)", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun pushDeleted(index: Int, point: ClickPoint) {
+        deletedStack.addLast(index to point)
+        while (deletedStack.size > 20) deletedStack.removeFirst()
+    }
+
+    /** 방금 삭제한 포인트를 되돌린다. */
+    private fun undoDelete() {
+        if (running) return
+        val last = deletedStack.removeLastOrNull()
+        if (last == null) {
+            Toast.makeText(this, "되돌릴 삭제가 없습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val (index, point) = last
+        config.points.add(index.coerceIn(0, config.points.size), point)
+        Store.save(this, config)
+        rebuildMarkers()
+        Toast.makeText(this, "되돌렸습니다", Toast.LENGTH_SHORT).show()
     }
 
     // --------------------------------------------------------------- macros
