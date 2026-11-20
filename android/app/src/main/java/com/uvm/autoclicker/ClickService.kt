@@ -68,6 +68,8 @@ class ClickService : AccessibilityService() {
         /** 이 시간마다 한 번씩 더 길게 쉬어 입력이 들어갈 틈을 준다 */
         private const val BREATHE_EVERY_MS = 350L
         private const val BREATHE_PAUSE_MS = 60L
+        /** 실행 시작 후 첫 터치까지의 짧은 지연 (감지층·마커 창 안정화) */
+        private const val FIRST_TAP_DELAY_MS = 150L
         /** 최고 속도 모드: 더 많은 터치를 한 묶음에, 더 긴 창으로 */
         private const val MAX_BATCH_STROKES_FAST = 60
         private const val BATCH_WINDOW_FAST_MS = 1000L
@@ -147,6 +149,8 @@ class ClickService : AccessibilityService() {
     /** 지금 종결 패스(전체 반복 뒤 종결 포인트 실행)를 하는 중인가 */
     private var endingPass = false
     private var cycle = 0
+    /** 강조 표시 중인 마커 번호 (바뀐 것만 다시 칠하기 위해) */
+    private var prevHighlight = -1
     /** 입력(정지 버튼 등)이 반드시 들어갈 틈을 만들기 위한 주기적 쉼 기준 시각 */
     private var lastBreatheAt = 0L
     /** 실행 시작 시각 (볼륨 변경 감지의 초기 오작동 방지용) */
@@ -841,8 +845,16 @@ class ClickService : AccessibilityService() {
         // 첫 포인트는 기본값.
         val x = dm.widthPixels / 2 + offset
         val y = dm.heightPixels / 2 + offset
+        // 마지막 포인트의 대기·횟수·확률·동작만 이어받고, 예약/종결/그룹은 끈 '보통 포인트'로 만든다.
+        // (예약·종결·그룹이 실수로 딸려와 "지정했는데 동작 안 함"이 생기던 문제 방지)
         val last = config.points.lastOrNull()
-        config.points.add(last?.copy(x = x, y = y) ?: ClickPoint(x, y, config.defaultDelayMs))
+        config.points.add(
+            if (last != null) ClickPoint(
+                x, y,
+                delayMs = last.delayMs, taps = last.taps, action = last.action,
+                swipeDp = last.swipeDp, swipeMs = last.swipeMs, chance = last.chance,
+            ) else ClickPoint(x, y, config.defaultDelayMs)
+        )
         Store.save(this, config)
         rebuildMarkers()
     }
@@ -1157,6 +1169,7 @@ class ClickService : AccessibilityService() {
             return
         }
         running = true
+        prevHighlight = -1
         runStartedAt = SystemClock.uptimeMillis()
         lastBreatheAt = runStartedAt
         showRunNotification()
@@ -1311,7 +1324,8 @@ class ClickService : AccessibilityService() {
         }
         updateInfo()
         if (runEndAt > 0) scheduleTimeCheck()
-        dispatchBatch()
+        // 감지층·마커 창이 자리잡기 전 첫 터치가 묻히지 않도록 아주 잠깐 뒤에 시작
+        handler.postDelayed({ if (running) dispatchBatch() }, FIRST_TAP_DELAY_MS)
     }
 
     /** 실행 시간 제한: 남은 시간 표시를 갱신하고, 시간이 다 되면 정지한다. */
@@ -1725,9 +1739,18 @@ class ClickService : AccessibilityService() {
         if (config.highlightRun && !config.maxSpeed) {
             highlights.forEach { (at, i) ->
                 handler.postDelayed({
-                    if (running) markers.forEachIndexed { k, m ->
-                        m.view.background = markerBackground(k == i, config.points[k].scheduled, config.points[k].ending)
+                    if (!running) return@postDelayed
+                    // 바뀐 마커만 다시 칠한다 (포인트가 많아도 가볍게)
+                    val prev = prevHighlight
+                    if (prev != i && prev in markers.indices) {
+                        markers[prev].view.background =
+                            markerBackground(false, config.points[prev].scheduled, config.points[prev].ending)
                     }
+                    if (i in markers.indices) {
+                        markers[i].view.background =
+                            markerBackground(true, config.points[i].scheduled, config.points[i].ending)
+                    }
+                    prevHighlight = i
                 }, at)
             }
         }
