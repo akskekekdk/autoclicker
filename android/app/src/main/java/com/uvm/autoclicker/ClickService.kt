@@ -530,6 +530,7 @@ class ClickService : AccessibilityService() {
         val swipeDistInput = numberInput(point.swipeDp)
         val swipeMsInput = numberInput(point.swipeMs)
         val chanceInput = numberInput(point.chance)
+        val randomInput = numberInput(point.randomPercent)
         val groupSizeInput = numberInput(point.groupSize)
         val groupRepeatInput = numberInput(point.groupRepeat)
         // 시/분/초 입력 한 줄
@@ -606,6 +607,8 @@ class ClickService : AccessibilityService() {
             addView(tapsInput)
             addView(label("실행 확률 (%, 100 = 항상)"))
             addView(chanceInput)
+            addView(label("랜덤 딜레이 ±% (0 = 끔. 예: 30이면 대기 100ms가 70~130ms로 매번 달라짐)"))
+            addView(randomInput)
         }
         val groupBox = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
@@ -732,6 +735,7 @@ class ClickService : AccessibilityService() {
                     point.swipeDp = dist
                     point.swipeMs = swipeMs
                     point.chance = chance
+                    point.randomPercent = (randomInput.text.toString().toIntOrNull() ?: 0).coerceIn(0, 100)
                     point.ending = endingCheck.isChecked
                     point.scheduled = scheduledCheck.isChecked
                     point.startSec = startSec
@@ -860,6 +864,7 @@ class ClickService : AccessibilityService() {
                 x, y,
                 delayMs = last.delayMs, taps = last.taps, action = last.action,
                 swipeDp = last.swipeDp, swipeMs = last.swipeMs, chance = last.chance,
+                randomPercent = last.randomPercent,
             ) else ClickPoint(x, y, config.defaultDelayMs)
         )
         Store.save(this, config)
@@ -1642,9 +1647,8 @@ class ClickService : AccessibilityService() {
         return true
     }
 
-    /** 랜덤 딜레이: ms를 ±randomPercent% 범위에서 무작위로 흔든다. 0이면 그대로. */
-    private fun jitter(ms: Long): Long {
-        val pct = config.randomPercent
+    /** 랜덤 딜레이: ms를 ±pct% 범위에서 무작위로 흔든다. 0이면 그대로. */
+    private fun jitter(ms: Long, pct: Int): Long {
         if (pct <= 0 || ms <= 0) return ms
         val d = ms * pct / 100
         if (d <= 0) return ms
@@ -1745,7 +1749,7 @@ class ClickService : AccessibilityService() {
                 if (point.action != Action.TAP) batchHasSwipe = true
             }
             steps++
-            var gap = jitter(point.delayMs)
+            var gap = jitter(point.delayMs, point.randomPercent)
             if (timed) {
                 // 예약 포인트도 반복 횟수만큼, 매번 대기 시간을 두고 실행한다
                 timedRepeat++
@@ -1768,7 +1772,7 @@ class ClickService : AccessibilityService() {
                         if (activeRepeat in 1..cycle) {
                             if (reachedEnd()) finished = true
                         } else {
-                            gap += jitter(config.loopDelayMs)
+                            gap += jitter(config.loopDelayMs, point.randomPercent)
                             setCycle(mainIdx)
                         }
                     }

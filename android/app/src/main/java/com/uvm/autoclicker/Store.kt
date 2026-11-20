@@ -63,6 +63,8 @@ data class ClickPoint(
     var groupRepeat: Int = 1,
     /** 종결 동작: 전체 반복이 끝난 뒤 한 번만, 종결 포인트끼리 순서대로 실행 */
     var ending: Boolean = false,
+    /** 이 포인트의 대기 시간을 ±이 퍼센트만큼 무작위로 흔든다 (0 = 끔). 매크로마다 따로 저장된다. */
+    var randomPercent: Int = 0,
 )
 
 data class Config(
@@ -95,8 +97,6 @@ data class Config(
     var highlightRun: Boolean = true,
     /** 최고 속도 모드: 속도 제한(묶음 사이 쉼)을 없앤다. 정지 버튼이 느려지니 볼륨 키로 정지 */
     var maxSpeed: Boolean = false,
-    /** 랜덤 딜레이: 각 대기 시간을 ±이 퍼센트만큼 무작위로 흔든다 (0 = 끔) */
-    var randomPercent: Int = 0,
     /** 밀기 진단: 밀기 제스처가 완료/취소/전송실패인지 토스트로 표시 (문제 원인 파악용) */
     var swipeDebug: Boolean = false,
 )
@@ -187,6 +187,7 @@ object Store {
                 p.optInt("groupSize", 1).coerceAtLeast(1),
                 p.optInt("groupRepeat", 1).coerceAtLeast(1),
                 p.optBoolean("ending", false),
+                p.optInt("randomPercent", 0).coerceIn(0, 100),
             )
         }
         return Config(
@@ -216,7 +217,6 @@ object Store {
             o.optInt("keepAliveSec", 0).coerceAtLeast(0),
             o.optBoolean("highlightRun", true),
             o.optBoolean("maxSpeed", false),
-            o.optInt("randomPercent", 0).coerceIn(0, 100),
             o.optBoolean("swipeDebug", false),
         )
     }
@@ -231,7 +231,7 @@ object Store {
                     .put("scheduled", it.scheduled).put("startSec", it.startSec)
                     .put("intervalSec", it.intervalSec).put("durationSec", it.durationSec)
                     .put("groupSize", it.groupSize).put("groupRepeat", it.groupRepeat)
-                    .put("ending", it.ending)
+                    .put("ending", it.ending).put("randomPercent", it.randomPercent)
             )
         }
         return JSONObject()
@@ -252,7 +252,6 @@ object Store {
             .put("keepAliveSec", cfg.keepAliveSec)
             .put("highlightRun", cfg.highlightRun)
             .put("maxSpeed", cfg.maxSpeed)
-            .put("randomPercent", cfg.randomPercent)
             .put("swipeDebug", cfg.swipeDebug)
     }
 }
