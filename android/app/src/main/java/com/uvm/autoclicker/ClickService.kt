@@ -70,6 +70,8 @@ class ClickService : AccessibilityService() {
         private const val BREATHE_PAUSE_MS = 60L
         /** 실행 시작 후 첫 터치까지의 짧은 지연 (감지층·마커 창 안정화) */
         private const val FIRST_TAP_DELAY_MS = 150L
+        /** 밀기(스크롤) 직전에 두는 여유 (앞 동작이 끝나고 화면이 정리될 시간) */
+        private const val SWIPE_LEAD_MS = 120L
         /** 최고 속도 모드: 더 많은 터치를 한 묶음에, 더 긴 창으로 */
         private const val MAX_BATCH_STROKES_FAST = 60
         private const val BATCH_WINDOW_FAST_MS = 1000L
@@ -1660,6 +1662,7 @@ class ClickService : AccessibilityService() {
         var strokes = 0
         var lastStrokeEnd = 0L
         var finished = false
+        var swipeLead = 0L // 다음 묶음이 밀기로 시작하면, 그 앞에 둘 여유 시간
         while (strokes < maxStrokes && (steps == 0 || t <= windowMs)) {
             // 예약 포인트만 있는 매크로에서 예약 실행이 끝나면 묶음을 마친다
             if (activeTimed < 0 && mainIdx.isEmpty()) break
@@ -1678,8 +1681,9 @@ class ClickService : AccessibilityService() {
             val timed = activeTimed >= 0
             val pi = if (timed) activeTimed else cycleSteps[index].first
             val point0 = config.points[pi]
-            // 밀기(스크롤)는 앞의 터치와 섞이면 안 먹힐 수 있어, 단독 묶음으로 보낸다
-            if (point0.action != Action.TAP && strokes > 0) break
+            // 밀기(스크롤)는 앞의 터치와 섞이면 안 먹힐 수 있어, 단독 묶음으로 보낸다.
+            // 또 바로 앞 동작 직후엔 화면이 안 정리돼 첫 밀기가 묻히므로, 밀기 앞에 여유를 둔다.
+            if (point0.action != Action.TAP && strokes > 0) { swipeLead = SWIPE_LEAD_MS; break }
             val p = targets[pi]
             val point = config.points[pi]
             val path = Path().apply { moveTo(p[0], p[1]) }
@@ -1784,6 +1788,7 @@ class ClickService : AccessibilityService() {
             return
         }
         var nextGap = if (config.maxSpeed) waitAfter else waitAfter.coerceAtLeast(MIN_BATCH_GAP_MS)
+        if (swipeLead > 0) nextGap = nextGap.coerceAtLeast(swipeLead)
         // 최고 속도 모드가 아니면, 실제 터치(정지 버튼)가 들어가도록 주기적으로 한 번 더 길게 쉰다
         if (!config.maxSpeed) {
             val nowMs = SystemClock.uptimeMillis()
