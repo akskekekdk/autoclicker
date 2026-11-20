@@ -1689,6 +1689,8 @@ class ClickService : AccessibilityService() {
             val p = targets[pi]
             val point = config.points[pi]
             val path = Path().apply { moveTo(p[0], p[1]) }
+            var destX = p[0]
+            var destY = p[1]
             val duration = if (point.action == Action.TAP) {
                 tapMs
             } else {
@@ -1701,10 +1703,9 @@ class ClickService : AccessibilityService() {
                     else -> d to 0f
                 }
                 val dm = resources.displayMetrics
-                path.lineTo(
-                    (p[0] + dx).coerceIn(1f, dm.widthPixels - 1f),
-                    (p[1] + dy).coerceIn(1f, dm.heightPixels - 1f),
-                )
+                destX = (p[0] + dx).coerceIn(1f, dm.widthPixels - 1f)
+                destY = (p[1] + dy).coerceIn(1f, dm.heightPixels - 1f)
+                path.lineTo(destX, destY)
                 point.swipeMs
             }
             // 예약 포인트는 자기 확률로, 기본 순서는 이미 정해진 값(cycleSteps)으로 터치 여부를 정한다.
@@ -1712,10 +1713,18 @@ class ClickService : AccessibilityService() {
                         else cycleSteps[index].second
             if (doTap) {
                 if (point.action != Action.TAP && android.os.Build.VERSION.SDK_INT >= 26) {
-                    // 밀기: 시작점을 잠깐 눌렀다가(목록이 손가락을 잡도록) 끌어서 더 확실히 스크롤
-                    val downPath = Path().apply { moveTo(p[0], p[1]); lineTo(p[0], p[1] + 1f) }
+                    // 밀기: 시작점을 잠깐 눌렀다가(목록이 손가락을 잡도록) 끌어서 더 확실히 스크롤.
+                    // 끌기 경로는 반드시 꾹 누르기가 끝난 바로 그 지점에서 시작해야 continueStroke 가
+                    // 취소되지 않는다. 그래서 꾹 누르기를 목적지 방향으로 1px만 움직여 끝점을 맞춘다.
+                    val len = kotlin.math.hypot((destX - p[0]).toDouble(), (destY - p[1]).toDouble()).toFloat()
+                    val nx = if (len > 0f) (destX - p[0]) / len else 0f
+                    val ny = if (len > 0f) (destY - p[1]) / len else 1f
+                    val midX = p[0] + nx
+                    val midY = p[1] + ny
+                    val downPath = Path().apply { moveTo(p[0], p[1]); lineTo(midX, midY) }
+                    val dragPath = Path().apply { moveTo(midX, midY); lineTo(destX, destY) }
                     val dwell = GestureDescription.StrokeDescription(downPath, t, SWIPE_DWELL_MS, true)
-                    val drag = dwell.continueStroke(path, t + SWIPE_DWELL_MS, duration, false)
+                    val drag = dwell.continueStroke(dragPath, t + SWIPE_DWELL_MS, duration, false)
                     builder.addStroke(dwell)
                     builder.addStroke(drag)
                     lastStrokeEnd = t + SWIPE_DWELL_MS + duration
