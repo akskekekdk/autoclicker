@@ -1170,6 +1170,15 @@ class ClickService : AccessibilityService() {
         Toast.makeText(this, "화면 터치로 정지했습니다", Toast.LENGTH_SHORT).show()
     }
 
+    private var lastSwipeToastAt = 0L
+    /** 밀기 진단 메시지. 반복이 많아도 눈에 보이게 최소 간격을 둔다. */
+    private fun swipeToast(msg: String) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastSwipeToastAt < 700) return
+        lastSwipeToastAt = now
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
     private fun start() {
         if (config.points.isEmpty()) {
             Toast.makeText(this, "＋ 버튼으로 터치할 위치를 먼저 추가하세요", Toast.LENGTH_SHORT).show()
@@ -1674,6 +1683,7 @@ class ClickService : AccessibilityService() {
         var finished = false
         var swipeLead = 0L // 다음 묶음이 밀기로 시작하면, 그 앞에 둘 여유 시간
         var batchGroup = Int.MIN_VALUE // 이번 묶음이 담고 있는 그룹 번호 (첫 터치가 정해진다)
+        var batchHasSwipe = false // 이번 묶음에 밀기가 들어 있는가 (진단 표시 + 가로채기 처리용)
         while (strokes < maxStrokes && (steps == 0 || t <= windowMs)) {
             // 예약 포인트만 있는 매크로에서 예약 실행이 끝나면 묶음을 마친다
             if (activeTimed < 0 && mainIdx.isEmpty()) break
@@ -1732,6 +1742,7 @@ class ClickService : AccessibilityService() {
                 lastStrokeEnd = t + duration
                 highlights.add(t to pi)
                 strokes++
+                if (point.action != Action.TAP) batchHasSwipe = true
             }
             steps++
             var gap = jitter(point.delayMs)
@@ -1819,13 +1830,17 @@ class ClickService : AccessibilityService() {
         val callback = object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) {
                 if (!running) return
+                if (batchHasSwipe && config.swipeDebug) swipeToast("밀기 완료")
                 handler.postDelayed({ afterBatch() }, nextGap)
             }
 
             override fun onCancelled(g: GestureDescription?) {
                 if (!running) return
-                // 앱이 터치하는 중에 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다
-                if (config.stopMode == StopMode.ANY_TOUCH) {
+                if (batchHasSwipe && config.swipeDebug) swipeToast("밀기 취소됨")
+                // 앱이 터치하는 중에 사용자가 화면을 만지면 시스템이 앱의 터치를 취소한다.
+                // 단, 밀기만 들어있는 묶음의 취소는 사용자 터치가 아니라 제스처 거부일 수 있으므로
+                // (게임이 밀기를 중간에 가로채는 경우) 화면터치 정지로 오인해 멈추지 않는다.
+                if (config.stopMode == StopMode.ANY_TOUCH && !batchHasSwipe) {
                     stopByTouch()
                 } else {
                     handler.postDelayed({ afterBatch() }, nextGap)
@@ -1833,6 +1848,7 @@ class ClickService : AccessibilityService() {
             }
         }
         if (!dispatchGesture(builder.build(), callback, handler)) {
+            if (batchHasSwipe && config.swipeDebug) swipeToast("밀기 전송 실패")
             handler.postDelayed({ afterBatch() }, t.coerceAtLeast(16))
         }
     }

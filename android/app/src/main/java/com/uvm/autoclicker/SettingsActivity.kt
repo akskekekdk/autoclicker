@@ -50,6 +50,7 @@ class SettingsActivity : Activity() {
     private lateinit var stopModeGroup: RadioGroup
     private lateinit var highlightCheck: CheckBox
     private lateinit var maxSpeedCheck: CheckBox
+    private lateinit var swipeDebugCheck: CheckBox
     private lateinit var randomEdit: EditText
     private lateinit var tapDurationEdit: EditText
     private val delayEdits = mutableListOf<EditText>()
@@ -152,7 +153,9 @@ class SettingsActivity : Activity() {
             addView(stopModeGroup)
             highlightCheck = CheckBox(this@SettingsActivity).apply { text = "실행 중 포인트 강조 표시 (끄면 깜빡임 없음)" }
             addView(highlightCheck)
-            addView(hint("실행 중 볼륨 버튼(또는 볼륨 변경)으로 언제든 정지할 수 있습니다."))
+            swipeDebugCheck = CheckBox(this@SettingsActivity).apply { text = "밀기 진단 표시 (밀기가 완료/취소/실패인지 알림)" }
+            addView(swipeDebugCheck)
+            addView(hint("실행 중 볼륨 버튼(또는 볼륨 변경)으로 언제든 정지할 수 있습니다. 밀기(스크롤)가 동작하지 않을 때 '밀기 진단 표시'를 켜면 밀기 때마다 완료/취소/실패가 뜹니다."))
         }
 
         // 예약 세션
@@ -286,6 +289,7 @@ class SettingsActivity : Activity() {
         }
         highlightCheck.isChecked = config.highlightRun
         maxSpeedCheck.isChecked = config.maxSpeed
+        swipeDebugCheck.isChecked = config.swipeDebug
         randomEdit.setText(config.randomPercent.toString())
         tapDurationEdit.setText(config.tapDurationMs.toString())
         renderPoints()
@@ -467,6 +471,7 @@ class SettingsActivity : Activity() {
             ?: StopMode.ANY_TOUCH
         latest.highlightRun = highlightCheck.isChecked
         latest.maxSpeed = maxSpeedCheck.isChecked
+        latest.swipeDebug = swipeDebugCheck.isChecked
         latest.randomPercent = (randomEdit.text.toString().ifBlank { "0" }.toIntOrNull() ?: 0).coerceIn(0, 100)
         latest.tapDurationMs = tapDuration
         Store.save(this, latest)

@@ -97,6 +97,8 @@ data class Config(
     var maxSpeed: Boolean = false,
     /** 랜덤 딜레이: 각 대기 시간을 ±이 퍼센트만큼 무작위로 흔든다 (0 = 끔) */
     var randomPercent: Int = 0,
+    /** 밀기 진단: 밀기 제스처가 완료/취소/전송실패인지 토스트로 표시 (문제 원인 파악용) */
+    var swipeDebug: Boolean = false,
 )
 
 object Store {
@@ -215,6 +217,7 @@ object Store {
             o.optBoolean("highlightRun", true),
             o.optBoolean("maxSpeed", false),
             o.optInt("randomPercent", 0).coerceIn(0, 100),
+            o.optBoolean("swipeDebug", false),
         )
     }
 
@@ -250,5 +253,6 @@ object Store {
             .put("highlightRun", cfg.highlightRun)
             .put("maxSpeed", cfg.maxSpeed)
             .put("randomPercent", cfg.randomPercent)
+            .put("swipeDebug", cfg.swipeDebug)
     }
 }
