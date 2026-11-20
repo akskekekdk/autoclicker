@@ -95,6 +95,8 @@ data class Config(
     var highlightRun: Boolean = true,
     /** 최고 속도 모드: 속도 제한(묶음 사이 쉼)을 없앤다. 정지 버튼이 느려지니 볼륨 키로 정지 */
     var maxSpeed: Boolean = false,
+    /** 랜덤 딜레이: 각 대기 시간을 ±이 퍼센트만큼 무작위로 흔든다 (0 = 끔) */
+    var randomPercent: Int = 0,
 )
 
 object Store {
@@ -212,6 +214,7 @@ object Store {
             o.optInt("keepAliveSec", 0).coerceAtLeast(0),
             o.optBoolean("highlightRun", true),
             o.optBoolean("maxSpeed", false),
+            o.optInt("randomPercent", 0).coerceIn(0, 100),
         )
     }
 
@@ -246,5 +249,6 @@ object Store {
             .put("keepAliveSec", cfg.keepAliveSec)
             .put("highlightRun", cfg.highlightRun)
             .put("maxSpeed", cfg.maxSpeed)
+            .put("randomPercent", cfg.randomPercent)
     }
 }

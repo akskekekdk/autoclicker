@@ -50,6 +50,7 @@ class SettingsActivity : Activity() {
     private lateinit var stopModeGroup: RadioGroup
     private lateinit var highlightCheck: CheckBox
     private lateinit var maxSpeedCheck: CheckBox
+    private lateinit var randomEdit: EditText
     private lateinit var tapDurationEdit: EditText
     private val delayEdits = mutableListOf<EditText>()
     private val tapsEdits = mutableListOf<EditText>()
@@ -132,7 +133,9 @@ class SettingsActivity : Activity() {
             addView(row("첫 포인트 기본 대기 (ms)", defaultDelayEdit))
             maxSpeedCheck = CheckBox(this@SettingsActivity).apply { text = "최고 속도 모드 (더 빠름 · 정지 버튼 느려짐)" }
             addView(maxSpeedCheck)
-            addView(hint("터치 누르는 시간이 작을수록 연타가 빨라집니다. 가끔 안 먹히면 50~100으로 늘리세요. 최고 속도 모드에서는 볼륨 키로 정지하세요."))
+            randomEdit = numberEdit()
+            addView(row("랜덤 딜레이 ±% (0 = 끔)", randomEdit))
+            addView(hint("터치 누르는 시간이 작을수록 연타가 빨라집니다. 가끔 안 먹히면 50~100으로 늘리세요. 최고 속도 모드에서는 볼륨 키로 정지하세요. 랜덤 딜레이 ±%는 각 대기 시간을 그 범위에서 무작위로 흔듭니다 (예: 30이면 100ms가 70~130ms)."))
         }
 
         // 정지 · 표시
@@ -283,6 +286,7 @@ class SettingsActivity : Activity() {
         }
         highlightCheck.isChecked = config.highlightRun
         maxSpeedCheck.isChecked = config.maxSpeed
+        randomEdit.setText(config.randomPercent.toString())
         tapDurationEdit.setText(config.tapDurationMs.toString())
         renderPoints()
         renderStatus()
@@ -463,6 +467,7 @@ class SettingsActivity : Activity() {
             ?: StopMode.ANY_TOUCH
         latest.highlightRun = highlightCheck.isChecked
         latest.maxSpeed = maxSpeedCheck.isChecked
+        latest.randomPercent = (randomEdit.text.toString().ifBlank { "0" }.toIntOrNull() ?: 0).coerceIn(0, 100)
         latest.tapDurationMs = tapDuration
         Store.save(this, latest)
         config = latest

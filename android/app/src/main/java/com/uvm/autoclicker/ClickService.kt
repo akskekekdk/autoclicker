@@ -1621,6 +1621,15 @@ class ClickService : AccessibilityService() {
         return true
     }
 
+    /** 랜덤 딜레이: ms를 ±randomPercent% 범위에서 무작위로 흔든다. 0이면 그대로. */
+    private fun jitter(ms: Long): Long {
+        val pct = config.randomPercent
+        if (pct <= 0 || ms <= 0) return ms
+        val d = ms * pct / 100
+        if (d <= 0) return ms
+        return (ms - d + Random.nextLong(2 * d + 1)).coerceAtLeast(0)
+    }
+
     /**
      * 다음 동작 여러 개를 하나의 제스처로 묶어 보낸다. 터치마다 따로 보내면 생기는
      * 지연이 사라져 연타가 빨라진다. 정지가 늦어지지 않도록 묶음 길이는 BATCH_WINDOW_MS로 제한한다.
@@ -1699,7 +1708,7 @@ class ClickService : AccessibilityService() {
                 lastStrokeEnd = t + duration
             }
             steps++
-            var gap = point.delayMs
+            var gap = jitter(point.delayMs)
             if (timed) {
                 // 예약 포인트도 반복 횟수만큼, 매번 대기 시간을 두고 실행한다
                 timedRepeat++
@@ -1722,7 +1731,7 @@ class ClickService : AccessibilityService() {
                         if (activeRepeat in 1..cycle) {
                             if (reachedEnd()) finished = true
                         } else {
-                            gap += config.loopDelayMs
+                            gap += jitter(config.loopDelayMs)
                             cycleSteps = buildCycleSteps()
                         }
                     }
