@@ -115,6 +115,10 @@ class ClickService : AccessibilityService() {
 
     // 화면 터치 감지층 조각들 (addTouchCatchers 참고)
     private val catchers = mutableListOf<View>()
+    /** 순서 정하기 모드: 마커를 누른 순서대로 1,2,3… 번호를 다시 매긴다 */
+    private var resequencing = false
+    private val resequenceOrder = mutableListOf<Int>()
+    private var seqBtn: TextView? = null
     /** 실행 중 각 포인트의 화면 좌표 */
     private var targets: List<FloatArray> = emptyList()
     private var stoppedByTouchAt = 0L
@@ -340,6 +344,7 @@ class ClickService : AccessibilityService() {
             panelButton("－", "삭제") { removeLastPoint() }.apply {
                 setOnLongClickListener { undoDelete(); true }
             },
+            panelButton("🔢", "순서") { toggleResequence() }.also { seqBtn = it },
             panelButton("🔁", "반복") { showRepeatDialog() },
             panelButton("⏰", "예약") { showScheduleDialog() },
             panelButton("💾", "매크로") { showMacroDialog() },
@@ -501,11 +506,65 @@ class ClickService : AccessibilityService() {
         val marker = Marker(view, params)
         makeDraggable(
             view, view, params,
-            onTap = { editPoint(index) },
+            onTap = { if (resequencing) tapResequence(index) else editPoint(index) },
             onDragEnd = { savePositions() },
         )
         wm.addView(view, params)
         return marker
+    }
+
+    /** 순서 정하기 모드 켜기/끄기. 켜면 마커를 누른 순서대로 번호가 다시 매겨진다. */
+    private fun toggleResequence() {
+        if (running) {
+            Toast.makeText(this, "실행 중에는 순서를 바꿀 수 없습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (config.points.size < 2) {
+            Toast.makeText(this, "포인트가 2개 이상일 때 사용하세요", Toast.LENGTH_SHORT).show()
+            return
+        }
+        resequencing = !resequencing
+        if (resequencing) {
+            resequenceOrder.clear()
+            seqBtn?.text = buttonText("✔", "순서완료")
+            Toast.makeText(this, "원하는 순서대로 마커를 누르세요. 다 누르면 '순서완료'를 누르세요.", Toast.LENGTH_LONG).show()
+        } else {
+            applyResequence()
+            seqBtn?.text = buttonText("🔢", "순서")
+        }
+    }
+
+    /** 순서 정하기 모드에서 마커를 눌렀을 때: 그 포인트에 다음 순번을 매긴다. */
+    private fun tapResequence(index: Int) {
+        if (index !in config.points.indices || index in resequenceOrder) return
+        resequenceOrder.add(index)
+        val n = resequenceOrder.size
+        markers.getOrNull(index)?.view?.apply {
+            text = n.toString()
+            textSize = 22f
+            background = markerBackground(true)
+        }
+        // 모두 다 누르면 자동으로 적용
+        if (resequenceOrder.size >= config.points.size) {
+            resequencing = false
+            applyResequence()
+            seqBtn?.text = buttonText("🔢", "순서")
+        }
+    }
+
+    /** 누른 순서대로 포인트 목록을 재배열한다. 누르지 않은 포인트는 원래 순서대로 뒤에 붙인다. */
+    private fun applyResequence() {
+        val tapped = resequenceOrder.filter { it in config.points.indices }.distinct()
+        if (tapped.isEmpty()) { rebuildMarkers(); return }
+        val newList = mutableListOf<ClickPoint>()
+        tapped.forEach { newList.add(config.points[it]) }
+        config.points.indices.forEach { if (it !in tapped) newList.add(config.points[it]) }
+        config.points.clear()
+        config.points.addAll(newList)
+        resequenceOrder.clear()
+        Store.save(this, config)
+        rebuildMarkers()
+        Toast.makeText(this, "순서를 바꿨습니다", Toast.LENGTH_SHORT).show()
     }
 
     /** 마커를 탭하면 그 포인트의 대기 시간과 터치 횟수를 바로 입력하는 창을 띄운다. */
@@ -1185,6 +1244,12 @@ class ClickService : AccessibilityService() {
     }
 
     private fun start() {
+        // 순서 정하기 모드가 켜진 채 실행하면, 지금까지 누른 순서를 먼저 적용하고 모드를 끈다
+        if (resequencing) {
+            resequencing = false
+            applyResequence()
+            seqBtn?.text = buttonText("🔢", "순서")
+        }
         if (config.points.isEmpty()) {
             Toast.makeText(this, "＋ 버튼으로 터치할 위치를 먼저 추가하세요", Toast.LENGTH_SHORT).show()
             return
