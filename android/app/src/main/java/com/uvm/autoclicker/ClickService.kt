@@ -1871,6 +1871,12 @@ class ClickService : AccessibilityService() {
                 }, at)
             }
         }
+        // 진단: 어떤 포인트가 실제로 발사되는지 번호를 띄운다 (문제 포인트 찾기용)
+        if (config.swipeDebug) {
+            highlights.forEach { (at, i) ->
+                handler.postDelayed({ if (running) swipeToast("${i + 1}번 실행") }, at)
+            }
+        }
         val afterBatch = {
             if (running) {
                 updateInfo()

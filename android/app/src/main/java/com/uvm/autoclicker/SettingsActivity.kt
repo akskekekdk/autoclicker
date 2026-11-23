@@ -150,9 +150,9 @@ class SettingsActivity : Activity() {
             addView(stopModeGroup)
             highlightCheck = CheckBox(this@SettingsActivity).apply { text = "실행 중 포인트 강조 표시 (끄면 깜빡임 없음)" }
             addView(highlightCheck)
-            swipeDebugCheck = CheckBox(this@SettingsActivity).apply { text = "밀기 진단 표시 (밀기가 완료/취소/실패인지 알림)" }
+            swipeDebugCheck = CheckBox(this@SettingsActivity).apply { text = "동작 진단 표시 (실행되는 포인트 번호 · 밀기 완료/취소/실패 알림)" }
             addView(swipeDebugCheck)
-            addView(hint("실행 중 볼륨 버튼(또는 볼륨 변경)으로 언제든 정지할 수 있습니다. 밀기(스크롤)가 동작하지 않을 때 '밀기 진단 표시'를 켜면 밀기 때마다 완료/취소/실패가 뜹니다."))
+            addView(hint("실행 중 볼륨 버튼(또는 볼륨 변경)으로 언제든 정지할 수 있습니다. '동작 진단 표시'를 켜면 어떤 포인트가 실제로 실행되는지 번호가 뜨고, 밀기(스크롤)는 완료/취소/실패가 뜹니다. 특정 포인트가 안 눌리는 원인을 찾을 때 켜세요."))
         }
 
         // 예약 세션
