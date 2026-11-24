@@ -654,9 +654,11 @@ class ClickService : AccessibilityService() {
         }
         fun selectedAction(): Action =
             actionGroup.findViewById<RadioButton>(actionGroup.checkedRadioButtonId)?.tag as? Action ?: Action.TAP
-        swipeBox.visibility = if (point.action == Action.TAP) View.GONE else View.VISIBLE
+        // 밀기 거리/시간 칸은 밀기일 때만 보인다 (터치·뒤로가기는 숨김)
+        fun usesSwipeBox(a: Action) = a != Action.TAP && a != Action.BACK
+        swipeBox.visibility = if (usesSwipeBox(point.action)) View.VISIBLE else View.GONE
         actionGroup.setOnCheckedChangeListener { _, _ ->
-            swipeBox.visibility = if (selectedAction() == Action.TAP) View.GONE else View.VISIBLE
+            swipeBox.visibility = if (usesSwipeBox(selectedAction())) View.VISIBLE else View.GONE
         }
         val normalBox = LinearLayout(theme).apply {
             orientation = LinearLayout.VERTICAL
@@ -1753,6 +1755,7 @@ class ClickService : AccessibilityService() {
         var swipeLead = 0L // 다음 묶음이 밀기로 시작하면, 그 앞에 둘 여유 시간
         var batchGroup = Int.MIN_VALUE // 이번 묶음이 담고 있는 그룹 번호 (첫 터치가 정해진다)
         var batchHasSwipe = false // 이번 묶음에 밀기가 들어 있는가 (진단 표시 + 가로채기 처리용)
+        var backThisBatch = false // 이번 묶음이 뒤로가기(전역 동작)인가
         while (strokes < maxStrokes && (steps == 0 || t <= windowMs)) {
             // 예약 포인트만 있는 매크로에서 예약 실행이 끝나면 묶음을 마친다
             if (activeTimed < 0 && mainIdx.isEmpty()) break
@@ -1784,27 +1787,33 @@ class ClickService : AccessibilityService() {
             val path = Path().apply { moveTo(p[0], p[1]) }
             var destX = p[0]
             var destY = p[1]
-            val duration = if (point.action == Action.TAP) {
-                tapMs
-            } else {
-                // 밀기: 시작점에서 정한 방향으로 이동 (화면 밖으로 나가지 않게 제한)
-                val d = dp(point.swipeDp).toFloat()
-                val (dx, dy) = when (point.action) {
-                    Action.SWIPE_UP -> 0f to -d
-                    Action.SWIPE_DOWN -> 0f to d
-                    Action.SWIPE_LEFT -> -d to 0f
-                    else -> d to 0f
+            val duration = when (point.action) {
+                Action.TAP -> tapMs
+                Action.BACK -> tapMs // 뒤로가기는 제스처가 아니므로 짧게 잡는다
+                else -> {
+                    // 밀기: 시작점에서 정한 방향으로 이동 (화면 밖으로 나가지 않게 제한)
+                    val d = dp(point.swipeDp).toFloat()
+                    val (dx, dy) = when (point.action) {
+                        Action.SWIPE_UP -> 0f to -d
+                        Action.SWIPE_DOWN -> 0f to d
+                        Action.SWIPE_LEFT -> -d to 0f
+                        else -> d to 0f
+                    }
+                    val dm = resources.displayMetrics
+                    destX = (p[0] + dx).coerceIn(1f, dm.widthPixels - 1f)
+                    destY = (p[1] + dy).coerceIn(1f, dm.heightPixels - 1f)
+                    path.lineTo(destX, destY)
+                    point.swipeMs
                 }
-                val dm = resources.displayMetrics
-                destX = (p[0] + dx).coerceIn(1f, dm.widthPixels - 1f)
-                destY = (p[1] + dy).coerceIn(1f, dm.heightPixels - 1f)
-                path.lineTo(destX, destY)
-                point.swipeMs
             }
             // 예약 포인트는 자기 확률로, 기본 순서는 이미 정해진 값(cycleSteps)으로 터치 여부를 정한다.
             val doTap = if (timed) point.chance >= 100 || Random.nextInt(100) < point.chance
                         else cycleSteps[index].second
-            if (doTap) {
+            if (doTap && point.action == Action.BACK) {
+                // 뒤로가기: 제스처가 아니라 전역 동작으로 수행한다. 단독 묶음으로 분리된다.
+                backThisBatch = true
+                highlights.add(t to pi)
+            } else if (doTap) {
                 // 밀기는 매끄러운 단일 제스처로 보낸다. (꾹 누르면 게임이 "길게 누르기"로
                 // 인식해 스크롤이 아니라 선택이 되어버리므로, 멈춤 없이 끌어야 스크롤이 된다.)
                 builder.addStroke(GestureDescription.StrokeDescription(path, t, duration))
@@ -1888,7 +1897,12 @@ class ClickService : AccessibilityService() {
             }
         }
         if (strokes == 0) {
-            // 이번 묶음은 확률로 모두 건너뜀: 시간만 흘려보낸다
+            // 뒤로가기 묶음이면 전역 뒤로가기 동작을 수행한다 (제스처가 아님)
+            if (backThisBatch) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                if (config.swipeDebug) swipeToast("뒤로가기 실행")
+            }
+            // 나머지(확률로 모두 건너뜀 등)는 시간만 흘려보낸다
             handler.postDelayed({ afterBatch() }, t)
             return
         }

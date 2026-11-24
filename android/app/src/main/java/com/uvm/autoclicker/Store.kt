@@ -24,6 +24,7 @@ enum class Action(val label: String, val arrow: String) {
     SWIPE_DOWN("아래로 밀기 (목록을 위로 올림)", "↓"),
     SWIPE_LEFT("왼쪽으로 밀기", "←"),
     SWIPE_RIGHT("오른쪽으로 밀기", "→"),
+    BACK("뒤로가기", "⤺"),
 }
 
 /** 예약 세션: ▶을 누르고 startSec초 뒤에 매크로 전체를 repeats번 반복 실행 */
